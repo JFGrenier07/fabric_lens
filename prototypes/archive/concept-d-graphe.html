@@ -1,0 +1,2047 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fabric Lens — Graphe vivant · 10.21.10.0/24</title>
+<style>
+/* ===== nocturne.css inline - page 100% autonome, aucun fichier externe ===== */
+/* Nocturne — design-system tokens and component classes.
+   Source: Claude Design project "Cisco ACI Policy Analyzer"
+   (_ds/nocturne-6dbba83f-ae08-459a-8073-fe7f5074721f/styles.css)
+   This file is the source of truth for the look. */
+/* Pas d'@import distant : les prototypes doivent se charger hors ligne (un @import
+   vers fonts.googleapis.com bloque le rendu jusqu'au timeout réseau). La pile
+   --font-heading / --font-body utilise Inter si elle est installée localement,
+   sinon system-ui — même résultat qu'aujourd'hui sur une machine hors ligne. */
+
+:root {
+  --color-bg: #161826;
+  --color-surface: #232532;
+  --color-text: #e9e9ed;
+  --color-accent: #9184d9;
+  --color-accent-2: #a7a1db;
+  --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale. */
+  --color-neutral-100: #f3f5fe;
+  --color-neutral-200: #e4e7f5;
+  --color-neutral-300: #cfd3e5;
+  --color-neutral-400: #b2b6ca;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #75798c;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --color-accent-100: #f5f4ff;
+  --color-accent-200: #e7e5fe;
+  --color-accent-300: #d2cefd;
+  --color-accent-400: #b5abfc;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #796cbf;
+  --color-accent-700: #5d5294;
+  --color-accent-800: #423a6a;
+  --color-accent-900: #2b2741;
+
+  --color-accent-2-100: #f5f4ff;
+  --color-accent-2-200: #e7e5fe;
+  --color-accent-2-300: #d2cefd;
+  --color-accent-2-400: #b5afe8;
+  --color-accent-2-500: #9690c9;
+  --color-accent-2-600: #7972a9;
+  --color-accent-2-700: #5c5783;
+  --color-accent-2-800: #423e5d;
+  --color-accent-2-900: #2b293a;
+
+  --color-section: #262a60;
+  --color-section-glow: #353b80;
+  --color-section-ghost: #4c5397;
+
+  --font-heading: "Inter", system-ui, sans-serif;
+  --font-heading-weight: 500;
+  --font-body: "Inter", system-ui, sans-serif;
+
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 0 0 1px #3f424d;
+  --shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0,0,0,0.55);
+  --shadow-lg: 0 0 0 1px #9397ab, 0 16px 40px rgba(0,0,0,0.65);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+.lighten { mix-blend-mode: lighten; background-color: transparent; }
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 400; }
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
+}
+h1 { font-size: 42px; }
+h2 { font-size: 32px; }
+h3 { font-size: 25px; }
+h4 { font-size: 20px; }
+h5 { font-size: 16px; }
+h6 { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-accent); text-underline-offset: 3px; }
+img { display: block; max-width: 100%; }
+figure { margin: 0; }
+figcaption {
+  font-size: 11px; margin-top: var(--space-1);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, Menlo, monospace; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+/* ── Rules ────────────────────────────────────────────────────────────── */
+.hr {
+  height: 1px; border: 0; margin: var(--space-4) 0;
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 14px; line-height: 1.2; color: var(--color-text);
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn svg { display: block; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.btn-primary:active { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.btn-icon { width: 36px; height: 36px; padding: 0; }
+.btn-block { width: 100%; margin-top: var(--space-2); }
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.input {
+  width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  font-size: 14px; color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+textarea.input { min-height: 90px; resize: vertical; }
+.radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.radio input, .seg-opt input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.radio .dot {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--color-divider);
+}
+.radio:hover .dot { border-color: var(--color-accent); }
+.radio input:checked + .dot {
+  border-color: var(--color-accent); background: var(--color-accent);
+  box-shadow: inset 0 0 0 4px var(--color-bg);
+}
+.radio input:focus-visible + .dot { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.seg-opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+}
+.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+.seg-opt:has(input:checked) { color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
+.seg-opt:not(:has(input:checked)):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.seg-opt:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* ── Cards ────────────────────────────────────────────────────────────── */
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface);
+}
+.card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+.card-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 17px; line-height: 1.2;
+}
+.card-body { margin: 0; font-size: 13px; opacity: 0.8; flex: 1; }
+.card-meta {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.elev-sm { box-shadow: var(--shadow-sm); }
+.elev-md { box-shadow: var(--shadow-md); }
+.elev-lg { box-shadow: var(--shadow-lg); }
+
+/* ── Tags ─────────────────────────────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; font-size: 11px;
+  letter-spacing: 0.02em; padding: 3px 10px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.tag-accent { background: var(--color-accent-800); color: var(--color-accent-100); }
+.tag-accent-2 { background: var(--color-accent-2-800); color: var(--color-accent-2-100); }
+.tag-neutral { background: var(--color-neutral-800); color: var(--color-neutral-100); }
+.tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
+
+/* ── Navigation ───────────────────────────────────────────────────────── */
+.nav {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: none;
+}
+.nav-brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 18px; margin-right: auto;
+}
+.nav a { color: inherit; text-decoration: none; font-size: 14px; }
+.nav a:hover, .nav a[aria-current='page'] { color: var(--color-accent); }
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th {
+  text-align: left; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  padding: var(--space-2); border-bottom: 1px solid transparent;
+}
+.table td { padding: var(--space-2); border-bottom: 1px solid transparent; }
+.table thead tr {
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr {
+  background: linear-gradient(to right,
+    transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+    color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr:hover {
+  background:
+    linear-gradient(color-mix(in srgb, var(--color-text) 4%, transparent),
+                    color-mix(in srgb, var(--color-text) 4%, transparent)) no-repeat 0 0 / 100% 100%,
+    linear-gradient(to right,
+      transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+      color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+
+/* ── Dialog ───────────────────────────────────────────────────────────── */
+.dialog-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+}
+.dialog {
+  width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--color-surface); box-shadow: var(--shadow-lg);
+}
+.dialog-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 20px;
+}
+.dialog-body { font-size: 14px; opacity: 0.85; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+</style>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  CONCEPT — « GRAPHE VIVANT » (direction D)
+  Tous les objets ACI des 20 fabrics vivent dans une seule simulation de forces
+  écrite à la main (Coulomb + ressorts + force de cluster par fabric + amortis-
+  sement). Le subnet recherché est un nœud UNIQUE et central : c'est physiquement
+  lui qui coud les fabrics ensemble, et la tension des ressorts rend ça visible.
+  Sécurité et routage sont deux axes ORTHOGONAUX rendus par deux canaux distincts :
+  la couleur+le trait (violet plein = security / bleu acier pointillé = rtctrl)
+  et la DIRECTION de la flèche (import → vers l'ext-EPG, export → vers le subnet).
+
+  PASSAGE À 20 FABRICS (dégradation assumée, testée par duplication mentale) :
+   1. Les centres de cluster sont posés sur des anneaux concentriques calculés
+      (RING_CAP = 8 par anneau) : 6 fabrics = 1 anneau, 20 = 3 anneaux. Aucun
+      changement de code, seulement plus d'anneaux.
+   2. Au-delà de FABRIC_AUTOCOLLAPSE (10), les fabrics sans match EXACT démarrent
+      REPLIÉS (une seule pastille + un lien de synthèse vers le subnet). L'écran
+      reste lisible ; l'ingénieur déplie ce qui l'intéresse.
+   3. La répulsion utilise un rayon de coupure (REP_CUTOFF) : le coût reste
+      O(n²) mais avec un test de distance carrée trivial. Mesuré en dupliquant
+      la fixture à 20 fabrics : 126 nœuds, 169 liens, convergence en 93 ticks,
+      0,5 ms/tick — très loin du budget 16 ms. C'est la LISIBILITÉ qui plafonne,
+      pas le calcul.
+   5. La vue s'auto-cadre sur le graphe stabilisé (fitView), donc 20 clusters
+      tiennent dans le viewport sans manipulation ; la densité, elle, impose de
+      replier ou de filtrer pour travailler confortablement.
+   4. Les étiquettes passent en mode « hubs seulement » (fabric + subnets) tant
+      que la simulation bouge, et le placement anti-collision ne tourne qu'à
+      l'arrêt. Si aucune position libre n'est trouvée, l'étiquette est omise —
+      le nœud reste survolable, cliquable et focusable au clavier.
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ── Signaux sémantiques ────────────────────────────────────────────────────
+   Tout est dérivé des tokens Nocturne (accent / accent-2 / section / neutral)
+   par color-mix. Aucun hex en dur. Sécurité = famille blurple. Routage =
+   dérive bleu-acier via --color-section-ghost. Conflit = neutre le plus clair,
+   qui « brûle » sur le fond sombre sans sortir de la famille chromatique. */
+:root{
+  --sig-sec:      var(--color-accent-400);
+  --sig-sec-dim:  color-mix(in oklab, var(--color-accent-400) 42%, transparent);
+  --sig-rt:       color-mix(in oklab, var(--color-section-ghost) 55%, var(--color-neutral-200) 45%);
+  --sig-rt-dim:   color-mix(in oklab, var(--color-section-ghost) 55%, transparent);
+  --sig-conflict: var(--color-neutral-100);
+  --sig-approx:   color-mix(in oklab, var(--color-accent-400) 40%, var(--color-neutral-600) 60%);
+  --sig-contract: var(--color-accent-2-400);
+  --sig-struct:   color-mix(in srgb, var(--color-text) 20%, transparent);
+  --sig-gateway:  color-mix(in oklab, var(--color-accent-300) 55%, var(--color-neutral-400) 45%);
+  --panel:        var(--color-surface);
+}
+html,body{height:100%}
+body{overflow:hidden}
+
+/* ── Chrome ─────────────────────────────────────────────────────────────── */
+.app{
+  display:grid;
+  grid-template-columns:236px minmax(0,1fr) 318px;
+  grid-template-rows:auto minmax(0,1fr);
+  height:100vh;
+}
+.topbar{
+  grid-column:1/-1;
+  display:flex;align-items:center;gap:var(--space-4);
+  padding:var(--space-3) var(--space-6);
+  border-bottom:1px solid var(--color-divider);
+}
+.brand{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;flex:none;border-radius:var(--radius-md);
+  background:var(--color-accent-900);color:var(--color-accent-300);
+  font-family:var(--font-heading);font-weight:600;font-size:12px;letter-spacing:.04em;
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--color-accent) 40%,transparent);
+}
+.brand-txt{font-family:var(--font-heading);font-weight:500;font-size:15px}
+.brand-txt span{color:color-mix(in srgb,var(--color-text) 62%,transparent)}
+.query{
+  display:inline-flex;align-items:center;gap:var(--space-2);
+  padding:var(--space-2) var(--space-4);
+  border:1px solid var(--color-divider);border-radius:var(--radius-md);
+  background:color-mix(in srgb,var(--color-accent) 7%,transparent);
+}
+.query .k{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-300)}
+.query .v{font-size:14px;font-weight:600;color:var(--color-text)}
+.topbar .spacer{margin-left:auto}
+.tools{display:flex;align-items:center;gap:var(--space-2)}
+
+/* ── Rails ──────────────────────────────────────────────────────────────── */
+.rail{
+  padding:var(--space-4) var(--space-4) var(--space-8);
+  overflow:auto;border-right:1px solid var(--color-divider);
+}
+.rail-r{border-right:0;border-left:1px solid var(--color-divider);background:var(--panel)}
+.rail h6,.rail-r h6{
+  color:color-mix(in srgb,var(--color-text) 52%,transparent);
+  margin:0 0 var(--space-3);
+}
+.grp+.grp{margin-top:var(--space-6)}
+
+.chk{
+  display:flex;align-items:center;gap:var(--space-3);
+  padding:4px 6px;border-radius:var(--radius-sm);
+  font-size:13px;cursor:pointer;user-select:none;
+}
+.chk:hover{background:color-mix(in srgb,var(--color-text) 6%,transparent)}
+.chk input{position:absolute;opacity:0;width:0;height:0}
+.chk .box{
+  width:13px;height:13px;flex:none;border-radius:3px;
+  border:1.5px solid color-mix(in srgb,var(--color-text) 32%,transparent);
+}
+.chk input:checked+.box{border-color:var(--color-accent);background:var(--color-accent);
+  box-shadow:inset 0 0 0 2px var(--color-bg)}
+.chk input:focus-visible+.box{outline:2px solid var(--color-accent);outline-offset:2px}
+.chk .cnt{margin-left:auto;font-size:11px;color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+.chk .swatch{width:8px;height:8px;border-radius:50%;flex:none}
+
+.fabrow{
+  display:flex;align-items:center;gap:var(--space-2);width:100%;
+  padding:5px 6px;margin-bottom:2px;
+  background:transparent;border:1px solid transparent;border-radius:var(--radius-sm);
+  color:inherit;font:inherit;font-size:12px;text-align:left;cursor:pointer;
+}
+.fabrow:hover{background:color-mix(in srgb,var(--color-text) 6%,transparent)}
+.fabrow[data-collapsed="1"]{opacity:.5}
+.fabrow .nm{font-size:11.5px}
+.fabrow .rl{margin-left:auto;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+.fabrow.is-conflict .rl{color:var(--sig-conflict)}
+.fabrow.is-approx .rl{color:var(--sig-approx)}
+.fabrow .eye{width:7px;height:7px;border-radius:50%;flex:none;
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--color-text) 30%,transparent)}
+
+/* ── Légende ────────────────────────────────────────────────────────────── */
+.leg{display:flex;flex-direction:column;gap:var(--space-2);font-size:11.5px}
+.leg .row{display:flex;align-items:center;gap:var(--space-3);line-height:1.35}
+.leg svg{flex:none}
+.leg .t{color:color-mix(in srgb,var(--color-text) 78%,transparent)}
+.leg .t b{font-weight:600;color:var(--color-text)}
+.leg .t i{font-style:normal;color:color-mix(in srgb,var(--color-text) 62%,transparent)}
+
+/* ── Scène ──────────────────────────────────────────────────────────────── */
+.stage{position:relative;overflow:hidden}
+#graph{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+#graph.dragging{cursor:grabbing}
+.stage-hint{
+  position:absolute;left:var(--space-6);bottom:var(--space-4);
+  font-size:11px;color:color-mix(in srgb,var(--color-text) 58%,transparent);
+  pointer-events:none;
+}
+.stage-status{
+  position:absolute;right:var(--space-6);bottom:var(--space-4);
+  font-size:11px;color:color-mix(in srgb,var(--color-text) 58%,transparent);
+  pointer-events:none;
+}
+
+/* ── SVG ────────────────────────────────────────────────────────────────── */
+.halo{fill:none;stroke:var(--color-divider);stroke-width:1;stroke-dasharray:2 6}
+.halo.conflict{stroke:color-mix(in oklab,var(--sig-conflict) 40%,transparent);stroke-dasharray:5 4}
+.halo-lbl{
+  font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  fill:color-mix(in srgb,var(--color-text) 60%,transparent);
+}
+.halo-lbl.conflict{fill:color-mix(in oklab,var(--sig-conflict) 70%,transparent)}
+
+.link{fill:none;stroke-linecap:round;pointer-events:none;transition:opacity .18s ease}
+.link.k-struct{stroke:var(--sig-struct);stroke-width:1}
+.link.k-contract{stroke:color-mix(in oklab,var(--sig-contract) 55%,transparent);stroke-width:1.2;stroke-dasharray:1 3}
+.link.k-gateway{stroke:var(--sig-gateway);stroke-width:1.4;stroke-dasharray:6 3}
+.link.k-sec{stroke:var(--sig-sec);stroke-width:1.7}
+.link.k-rt{stroke:var(--sig-rt);stroke-width:1.7;stroke-dasharray:5 4}
+.link.k-conflict{stroke:var(--sig-conflict);stroke-width:1.6;stroke-dasharray:2 4}
+.link.k-cover{stroke:var(--sig-approx);stroke-width:1.5;stroke-dasharray:1 5}
+.link.approx{stroke-dasharray:1 5;stroke-width:1.4;opacity:.75}
+.link.hit{stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+.link.hit:focus{outline:none}
+.link.hit:focus-visible{stroke:color-mix(in srgb,var(--color-accent) 45%,transparent);stroke-width:9}
+.g-links[data-focus="1"] .link:not(.on){opacity:.09}
+.g-nodes[data-focus="1"] .node:not(.on){opacity:.22}
+.g-labels[data-focus="1"] .lbl:not(.on),
+.g-labels[data-focus="1"] .badge:not(.on){opacity:.12}
+.link.on.k-sec{stroke-width:2.6;filter:url(#glowSec)}
+.link.on.k-rt{stroke-width:2.6;filter:url(#glowRt)}
+.link.on.k-conflict{stroke-width:2.4}
+.link.pinned{opacity:1!important}
+
+.mk-sec{fill:var(--sig-sec)}
+.mk-rt{fill:var(--sig-rt)}
+
+.node{cursor:pointer;transition:opacity .18s ease}
+.node .ring{fill:var(--color-surface);stroke-width:1.4}
+.node .glyph{pointer-events:none;fill:color-mix(in srgb,var(--color-text) 58%,transparent)}
+.node:focus{outline:none}
+.node:focus-visible .focusring{
+  stroke:var(--color-accent);stroke-width:2;fill:none;opacity:1;
+}
+.focusring{opacity:0}
+.n-fabric  .ring{stroke:color-mix(in srgb,var(--color-text) 34%,transparent)}
+.n-vrf     .ring{stroke:color-mix(in srgb,var(--color-text) 22%,transparent)}
+.n-l3out   .ring{stroke:var(--color-accent-600)}
+.n-extepg  .ring{stroke:var(--color-accent-500)}
+.n-epg     .ring{stroke:var(--color-accent-2-600)}
+.n-bd      .ring{stroke:color-mix(in srgb,var(--color-text) 26%,transparent)}
+.n-contract .ring{stroke:var(--sig-contract);stroke-dasharray:3 2.5}
+.n-subnet  .ring{stroke:var(--color-accent-300)}
+.node.is-query .ring{stroke:var(--color-accent);stroke-width:2}
+.node.is-conflict .ring{stroke:var(--sig-conflict);stroke-dasharray:3 3}
+.node.on .ring{stroke-width:2.2}
+.node.sel .ring{stroke:var(--color-accent-200);stroke-width:2.4}
+.pulse{fill:none;stroke:var(--color-accent);opacity:0}
+.node.sel .pulse{opacity:.5}
+
+.lbl{
+  font-size:10.5px;pointer-events:none;
+  fill:color-mix(in srgb,var(--color-text) 74%,transparent);
+  paint-order:stroke;stroke:var(--color-bg);stroke-width:3.2;stroke-linejoin:round;
+  transition:opacity .18s ease;
+}
+.lbl.hub{font-size:11.5px;font-weight:600;fill:var(--color-text)}
+.lbl.query{font-size:13px;font-weight:600;fill:var(--color-accent-200)}
+.lbl.dim{fill:color-mix(in srgb,var(--color-text) 58%,transparent)}
+.badge{font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+  paint-order:stroke;stroke:var(--color-bg);stroke-width:3;stroke-linejoin:round}
+.badge.conflict{fill:var(--sig-conflict)}
+.badge.approx{fill:var(--sig-approx)}
+.spark{fill:var(--color-accent-200);opacity:0}
+
+/* ── Panneau détail ─────────────────────────────────────────────────────── */
+.det-kicker{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-300)}
+.det-title{font-family:var(--font-heading);font-weight:500;font-size:17px;line-height:1.2;
+  margin:2px 0 var(--space-3);word-break:break-all}
+.kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:2px var(--space-3);font-size:12px}
+.kv dt{color:color-mix(in srgb,var(--color-text) 62%,transparent)}
+.kv dd{margin:0;word-break:break-all}
+.dn{
+  margin-top:var(--space-4);padding:var(--space-3);
+  border:1px solid var(--color-divider);border-radius:var(--radius-sm);
+  font-size:10px;line-height:1.5;word-break:break-all;
+  color:color-mix(in srgb,var(--color-text) 62%,transparent);
+}
+.scope-card{
+  padding:var(--space-3);border-radius:var(--radius-sm);
+  box-shadow:var(--shadow-sm);margin-bottom:var(--space-2);
+}
+.scope-card .hd{display:flex;align-items:center;gap:var(--space-2);font-size:12px;font-weight:600}
+.scope-card .bd{font-size:11.5px;margin-top:3px;color:color-mix(in srgb,var(--color-text) 62%,transparent)}
+.scope-card.sec .hd{color:var(--sig-sec)}
+.scope-card.rt .hd{color:var(--sig-rt)}
+.axis-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.note{
+  margin-top:var(--space-4);padding:var(--space-3);
+  border-left:2px solid var(--color-accent);border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  background:color-mix(in srgb,var(--color-accent) 8%,transparent);
+  font-size:11.5px;line-height:1.5;
+}
+.note.warn{border-left-color:var(--sig-conflict);
+  background:color-mix(in oklab,var(--sig-conflict) 7%,transparent)}
+.note b{color:var(--color-accent-200)}
+.note.warn b{color:var(--sig-conflict)}
+.empty{font-size:12.5px;line-height:1.6;color:color-mix(in srgb,var(--color-text) 52%,transparent)}
+.det-actions{display:flex;gap:var(--space-2);margin-top:var(--space-4);flex-wrap:wrap}
+.pinlist{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)}
+
+/* ── Animation d'entrée (≤ 2 s, jouée une fois) ─────────────────────────── */
+@keyframes flFade{from{opacity:0}to{opacity:1}}
+@keyframes flRise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.topbar,.rail,.rail-r{animation:flRise .5s cubic-bezier(.22,.9,.3,1) both}
+.rail{animation-delay:.15s}.rail-r{animation-delay:.25s}
+.g-links,.g-labels{animation:flFade .8s ease both;animation-delay:.35s}
+@media (prefers-reduced-motion:reduce){
+  .topbar,.rail,.rail-r,.g-links,.g-labels{animation:none}
+}
+
+/* ≥1280px = cible. En dessous, les rails se compriment puis le rail droit
+   devient un panneau flottant plutôt que de casser la scène. */
+@media (max-width:1439px){ .app{grid-template-columns:206px minmax(0,1fr) 286px} }
+@media (max-width:1279px){
+  .app{grid-template-columns:0 minmax(0,1fr) 286px}
+  .rail{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand" aria-hidden="true">FL</div>
+    <div class="brand-txt">Fabric&nbsp;Lens <span>· Graphe vivant</span></div>
+    <div class="query">
+      <span class="k">Subnet</span>
+      <span class="v mono" id="q-val">—</span>
+    </div>
+    <span class="tag tag-outline" id="q-count">—</span>
+    <span class="tag tag-neutral" id="q-flags">—</span>
+    <div class="spacer"></div>
+    <div class="tools">
+      <button class="btn btn-primary" id="btn-path" type="button">Jouer le chemin inter-fabric</button>
+      <button class="btn btn-secondary" id="btn-collapse" type="button">Tout replier</button>
+      <button class="btn btn-secondary" id="btn-reset" type="button">Réinitialiser la vue</button>
+      <button class="btn btn-ghost" id="btn-replay" type="button">↻ Rejouer</button>
+    </div>
+  </header>
+
+  <aside class="rail">
+    <div class="grp">
+      <h6>Fabrics</h6>
+      <div id="fab-list"></div>
+    </div>
+    <hr class="hr">
+    <div class="grp">
+      <h6>Types d'objets</h6>
+      <div id="type-list"></div>
+    </div>
+    <hr class="hr">
+    <div class="grp">
+      <h6>Lecture des liens</h6>
+      <div class="leg">
+        <div class="row">
+          <svg width="34" height="10" aria-hidden="true"><line x1="1" y1="5" x2="27" y2="5" style="stroke:var(--sig-sec)" stroke-width="1.8"/><path d="M27 1.5 33 5 27 8.5Z" style="fill:var(--sig-sec)"/></svg>
+          <span class="t"><b>Sécurité</b> — <i>import-security : le préfixe classifie le trafic entrant dans l'ext-EPG</i></span>
+        </div>
+        <div class="row">
+          <svg width="34" height="10" aria-hidden="true"><line x1="7" y1="5" x2="33" y2="5" style="stroke:var(--sig-rt)" stroke-width="1.8" stroke-dasharray="5 4"/><path d="M7 1.5 1 5 7 8.5Z" style="fill:var(--sig-rt)"/></svg>
+          <span class="t"><b>Routage</b> — <i>export-rtctrl : le préfixe est annoncé vers l'extérieur</i></span>
+        </div>
+        <div class="row">
+          <svg width="34" height="10" aria-hidden="true"><line x1="1" y1="3" x2="33" y2="3" style="stroke:var(--sig-sec)" stroke-width="1.6"/><line x1="1" y1="7.5" x2="33" y2="7.5" style="stroke:var(--sig-rt)" stroke-width="1.6" stroke-dasharray="5 4"/></svg>
+          <span class="t"><b>Les deux</b> — <i>deux traits parallèles : axes orthogonaux</i></span>
+        </div>
+        <div class="row">
+          <svg width="34" height="10" aria-hidden="true"><line x1="1" y1="5" x2="33" y2="5" style="stroke:var(--sig-sec)" stroke-width="1.4" stroke-dasharray="1 5"/></svg>
+          <span class="t"><b>Match par agrégat</b> — <i>trait pointillé fin : le préfixe couvre, il n'est pas égal</i></span>
+        </div>
+        <div class="row">
+          <svg width="34" height="10" aria-hidden="true"><line x1="1" y1="5" x2="33" y2="5" style="stroke:var(--sig-conflict)" stroke-width="1.6" stroke-dasharray="2 4"/></svg>
+          <span class="t"><b>Conflit</b> — <i>même réseau, autre tenant/VRF</i></span>
+        </div>
+        <div class="row">
+          <svg width="34" height="10" aria-hidden="true"><line x1="1" y1="5" x2="33" y2="5" style="stroke:var(--sig-gateway)" stroke-width="1.4" stroke-dasharray="6 3"/></svg>
+          <span class="t"><b>Gateway</b> — <i>subnet porté par un Bridge Domain</i></span>
+        </div>
+        <div class="row">
+          <svg width="34" height="10" aria-hidden="true"><line x1="1" y1="5" x2="33" y2="5" style="stroke:var(--sig-contract)" stroke-width="1.4" stroke-dasharray="1 3"/></svg>
+          <span class="t"><b>Contract</b> — <i>provide / consume</i></span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <svg id="graph" role="application" aria-label="Graphe des objets ACI liés au subnet recherché, réparti par fabric"></svg>
+    <div class="stage-hint">Glisser un nœud · molette&nbsp;: zoom · double-clic&nbsp;: épingler le chemin · Tab&nbsp;: parcourir · Échap&nbsp;: tout relâcher</div>
+    <div class="stage-status mono" id="sim-status"></div>
+  </main>
+
+  <aside class="rail rail-r" id="detail" aria-live="polite">
+    <h6>Détail</h6>
+    <div id="detail-body"></div>
+  </aside>
+
+</div>
+
+<script>
+"use strict";
+/* ─── Données : copie fidèle de prototypes/fixture.json ───────────────────── */
+const DATA =
+{
+  "_comment": "Jeu de données de démo pour les prototypes visuels Fabric Lens. Structure et vocabulaire calqués sur le MIT ACI réel (validé contre un APIC 6.0(7e)). Scénario : le subnet 10.21.10.0/24 existe dans 6 fabrics avec des rôles différents.",
+  "query": { "type": "subnet", "value": "10.21.10.0/24" },
+  "scopeLegend": {
+    "import-security": "External Subnets for the External EPG — classifie le trafic entrant dans l'ext-EPG",
+    "export-rtctrl": "Advertised Externally — le préfixe est annoncé vers l'extérieur",
+    "import-rtctrl": "Import Route Control",
+    "shared-security": "Shared Security Import (inter-VRF)",
+    "shared-rtctrl": "Shared Route Control (inter-VRF)"
+  },
+  "fabrics": [
+    {
+      "id": "DC-PARIS-01",
+      "site": "Paris",
+      "role": "origin",
+      "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:00:14Z",
+      "bd": {
+        "dn": "uni/tn-Production/BD-BD-WEB-2110",
+        "tenant": "Production",
+        "name": "BD-WEB-2110",
+        "vrf": "Prod_VRF",
+        "unicastRoute": "yes",
+        "arpFlood": "no",
+        "unkMacUcastAct": "proxy",
+        "subnet": { "ip": "10.21.10.1/24", "scope": "public,shared", "preferred": "no" }
+      },
+      "epgs": [
+        {
+          "dn": "uni/tn-Production/ap-WebApp_AP/epg-WebServers_EPG",
+          "name": "WebServers_EPG",
+          "ap": "WebApp_AP",
+          "encap": "vlan-2110",
+          "deployment": "static-port",
+          "paths": [
+            { "tDn": "topology/pod-1/protpaths-101-102/pathep-[SRV-VPC.IPG]", "mode": "regular", "kind": "vpc" }
+          ],
+          "domain": "uni/phys-Prod_PhysDomain",
+          "provides": ["Web_Internet_Contract"],
+          "consumes": ["Web_to_App_Contract"]
+        }
+      ],
+      "l3outs": [
+        {
+          "dn": "uni/tn-Production/out-L3OUT-INTERNET",
+          "name": "L3OUT-INTERNET",
+          "vrf": "Prod_VRF",
+          "domain": "uni/l3dom-Test_L3DOM_Standard",
+          "enforceRtctrl": "export",
+          "nodes": ["101", "102"],
+          "extEpgs": [
+            {
+              "dn": "uni/tn-Production/out-L3OUT-INTERNET/instP-EXT-INTERNET",
+              "name": "EXT-INTERNET",
+              "prefGrMemb": "exclude",
+              "subnets": [
+                { "ip": "10.21.10.0/24", "scope": ["export-rtctrl"], "aggregate": "" },
+                { "ip": "0.0.0.0/0", "scope": ["import-security"], "aggregate": "" }
+              ],
+              "provides": [],
+              "consumes": ["Web_Internet_Contract"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DC-LYON-02",
+      "site": "Lyon",
+      "role": "dr",
+      "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:04:02Z",
+      "bd": {
+        "dn": "uni/tn-Production/BD-BD-WEB-DR",
+        "tenant": "Production",
+        "name": "BD-WEB-DR",
+        "vrf": "Prod_VRF",
+        "unicastRoute": "yes",
+        "arpFlood": "yes",
+        "unkMacUcastAct": "flood",
+        "subnet": { "ip": "10.21.10.1/24", "scope": "private", "preferred": "no" }
+      },
+      "epgs": [
+        {
+          "dn": "uni/tn-Production/ap-WebApp_AP/epg-WebServers_DR_EPG",
+          "name": "WebServers_DR_EPG",
+          "ap": "WebApp_AP",
+          "encap": "vlan-2310",
+          "deployment": "aaep",
+          "paths": [],
+          "aaep": "uni/infra/attentp-SRV.AAEP",
+          "domain": "uni/phys-Prod_PhysDomain",
+          "provides": [],
+          "consumes": []
+        }
+      ],
+      "l3outs": [
+        {
+          "dn": "uni/tn-Production/out-L3OUT-DCI",
+          "name": "L3OUT-DCI",
+          "vrf": "Prod_VRF",
+          "domain": "uni/l3dom-Test_L3DOM_Standard",
+          "enforceRtctrl": "export",
+          "nodes": ["201", "202"],
+          "extEpgs": [
+            {
+              "dn": "uni/tn-Production/out-L3OUT-DCI/instP-EXT-DCI",
+              "name": "EXT-DCI",
+              "prefGrMemb": "exclude",
+              "subnets": [
+                { "ip": "10.21.10.0/24", "scope": ["import-security"], "aggregate": "" }
+              ],
+              "provides": ["DR_Sync_Contract"],
+              "consumes": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DC-FRA-03",
+      "site": "Francfort",
+      "role": "transit",
+      "apicVersion": "6.0(6c)",
+      "backupTs": "2026-07-20T01:07:41Z",
+      "bd": null,
+      "epgs": [],
+      "l3outs": [
+        {
+          "dn": "uni/tn-Transit/out-L3OUT-WAN",
+          "name": "L3OUT-WAN",
+          "vrf": "Transit_VRF",
+          "domain": "uni/l3dom-WAN_L3DOM",
+          "enforceRtctrl": "export",
+          "nodes": ["301", "302"],
+          "extEpgs": [
+            {
+              "dn": "uni/tn-Transit/out-L3OUT-WAN/instP-EXT-WAN",
+              "name": "EXT-WAN",
+              "prefGrMemb": "exclude",
+              "subnets": [
+                { "ip": "10.21.10.0/24", "scope": ["import-security", "export-rtctrl"], "aggregate": "" },
+                { "ip": "10.21.0.0/16", "scope": ["import-rtctrl"], "aggregate": "" }
+              ],
+              "provides": ["Transit_Contract"],
+              "consumes": []
+            }
+          ]
+        },
+        {
+          "dn": "uni/tn-Transit/out-L3OUT-PARTNER",
+          "name": "L3OUT-PARTNER",
+          "vrf": "Transit_VRF",
+          "domain": "uni/l3dom-WAN_L3DOM",
+          "enforceRtctrl": "export",
+          "nodes": ["303"],
+          "extEpgs": [
+            {
+              "dn": "uni/tn-Transit/out-L3OUT-PARTNER/instP-EXT-PARTNER",
+              "name": "EXT-PARTNER",
+              "prefGrMemb": "exclude",
+              "subnets": [
+                { "ip": "10.21.10.0/24", "scope": ["shared-security", "shared-rtctrl"], "aggregate": "" }
+              ],
+              "provides": [],
+              "consumes": ["Transit_Contract"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DC-MTL-04",
+      "site": "Montréal",
+      "role": "consumer",
+      "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:11:09Z",
+      "bd": null,
+      "epgs": [],
+      "l3outs": [
+        {
+          "dn": "uni/tn-Production/out-L3OUT-CORE",
+          "name": "L3OUT-CORE",
+          "vrf": "Prod_VRF",
+          "domain": "uni/l3dom-Core_L3DOM",
+          "enforceRtctrl": "export",
+          "nodes": ["401", "402"],
+          "extEpgs": [
+            {
+              "dn": "uni/tn-Production/out-L3OUT-CORE/instP-EXT-CORE",
+              "name": "EXT-CORE",
+              "prefGrMemb": "exclude",
+              "subnets": [
+                { "ip": "10.21.10.0/24", "scope": ["import-security"], "aggregate": "" }
+              ],
+              "provides": [],
+              "consumes": ["Web_Internet_Contract"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DC-TOR-05",
+      "site": "Toronto",
+      "role": "consumer",
+      "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:14:52Z",
+      "bd": null,
+      "epgs": [],
+      "l3outs": [
+        {
+          "dn": "uni/tn-Production/out-L3OUT-CORE",
+          "name": "L3OUT-CORE",
+          "vrf": "Prod_VRF",
+          "domain": "uni/l3dom-Core_L3DOM",
+          "enforceRtctrl": "export",
+          "nodes": ["501", "502"],
+          "extEpgs": [
+            {
+              "dn": "uni/tn-Production/out-L3OUT-CORE/instP-EXT-CORE",
+              "name": "EXT-CORE",
+              "prefGrMemb": "exclude",
+              "subnets": [
+                { "ip": "10.21.0.0/16", "scope": ["import-security"], "aggregate": "" }
+              ],
+              "provides": [],
+              "consumes": ["Web_Internet_Contract"],
+              "_note": "match par agrégat /16, pas exact — à signaler différemment"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DC-BRU-06",
+      "site": "Bruxelles",
+      "role": "conflict",
+      "apicVersion": "5.2(8h)",
+      "backupTs": "2026-07-20T01:18:30Z",
+      "bd": {
+        "dn": "uni/tn-Legacy/BD-BD-LEGACY-WEB",
+        "tenant": "Legacy",
+        "name": "BD-LEGACY-WEB",
+        "vrf": "Legacy_VRF",
+        "unicastRoute": "yes",
+        "arpFlood": "no",
+        "unkMacUcastAct": "proxy",
+        "subnet": { "ip": "10.21.10.254/24", "scope": "public", "preferred": "no" }
+      },
+      "epgs": [
+        {
+          "dn": "uni/tn-Legacy/ap-Legacy_AP/epg-LEGACY_WEB_EPG",
+          "name": "LEGACY_WEB_EPG",
+          "ap": "Legacy_AP",
+          "encap": "vlan-2110",
+          "deployment": "static-port",
+          "paths": [
+            { "tDn": "topology/pod-1/paths-601/pathep-[eth1/22]", "mode": "untagged", "kind": "access" }
+          ],
+          "domain": "uni/phys-PHY.DOM",
+          "provides": [],
+          "consumes": []
+        }
+      ],
+      "l3outs": []
+    }
+  ],
+  "contracts": {
+    "Web_Internet_Contract": {
+      "dn": "uni/tn-Production/brc-Web_Internet_Contract",
+      "scope": "context",
+      "subjects": [
+        { "name": "web", "filters": [
+          { "name": "http", "etherT": "ip", "prot": "tcp", "dFromPort": "80", "dToPort": "80" },
+          { "name": "https", "etherT": "ip", "prot": "tcp", "dFromPort": "443", "dToPort": "443" }
+        ] }
+      ]
+    },
+    "Web_to_App_Contract": {
+      "dn": "uni/tn-Production/brc-Web_to_App_Contract",
+      "scope": "context",
+      "subjects": [
+        { "name": "app", "filters": [
+          { "name": "app-tls", "etherT": "ip", "prot": "tcp", "dFromPort": "8443", "dToPort": "8443" }
+        ] }
+      ]
+    },
+    "DR_Sync_Contract": {
+      "dn": "uni/tn-Production/brc-DR_Sync_Contract",
+      "scope": "context",
+      "subjects": [
+        { "name": "sync", "filters": [
+          { "name": "https", "etherT": "ip", "prot": "tcp", "dFromPort": "443", "dToPort": "443" }
+        ] }
+      ]
+    },
+    "Transit_Contract": {
+      "dn": "uni/tn-Transit/brc-Transit_Contract",
+      "scope": "global",
+      "subjects": [
+        { "name": "any", "filters": [
+          { "name": "default", "etherT": "unspecified", "prot": "unspecified", "dFromPort": "unspecified", "dToPort": "unspecified" }
+        ] }
+      ]
+    }
+  },
+  "accessChain": {
+    "_comment": "Chaîne access policies résolue pour vlan-2110 sur DC-PARIS-01, telle que reconstruite depuis un backup.",
+    "vlan": 2110,
+    "encapBlk": { "dn": "uni/infra/vlanns-[Prod_VLAN_Pool]-static/from-[vlan-2000]-to-[vlan-2199]", "from": "vlan-2000", "to": "vlan-2199", "allocMode": "static", "role": "external" },
+    "vlanPool": { "dn": "uni/infra/vlanns-[Prod_VLAN_Pool]-static", "name": "Prod_VLAN_Pool", "allocMode": "static" },
+    "domains": [
+      { "dn": "uni/phys-Prod_PhysDomain", "name": "Prod_PhysDomain", "cls": "physDomP" },
+      { "dn": "uni/l3dom-Test_L3DOM_Standard", "name": "Test_L3DOM_Standard", "cls": "l3extDomP" }
+    ],
+    "aaeps": [
+      { "dn": "uni/infra/attentp-SRV.AAEP", "name": "SRV.AAEP",
+        "funcToEpg": [ { "tDn": "uni/tn-Production/ap-WebApp_AP/epg-WebServers_EPG", "encap": "vlan-2110", "mode": "regular" } ] }
+    ],
+    "ipgs": [
+      { "dn": "uni/infra/funcprof/accbundle-SRV-VPC.IPG", "name": "SRV-VPC.IPG", "cls": "infraAccBndlGrp", "lagT": "node" },
+      { "dn": "uni/infra/funcprof/accportgrp-SRV-WEB.IPG", "name": "SRV-WEB.IPG", "cls": "infraAccPortGrp", "lagT": "" }
+    ],
+    "interfaces": [
+      { "node": "101", "port": "eth1/20", "profile": "system-port-profile-node-101", "selector": "SRV-VPC.IPG", "ipg": "SRV-VPC.IPG" },
+      { "node": "102", "port": "eth1/20", "profile": "system-port-profile-node-102", "selector": "SRV-VPC.IPG", "ipg": "SRV-VPC.IPG" },
+      { "node": "101", "port": "eth1/10", "profile": "system-port-profile-node-101", "selector": "SRV-WEB.IPG", "ipg": "SRV-WEB.IPG" }
+    ],
+    "vpcPair": { "name": "vpc_pg_pod1_101_102", "nodes": ["101", "102"] }
+  }
+}
+;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1 · Outils
+   ═════════════════════════════════════════════════════════════════════════ */
+const SVGNS = "http://www.w3.org/2000/svg";
+const el = (t, a) => { const n = document.createElementNS(SVGNS, t); if (a) for (const k in a) n.setAttribute(k, a[k]); return n; };
+const $ = s => document.querySelector(s);
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const rnd = mulberry32(20260720);
+
+const ipToInt = ip => ip.split(".").reduce((a, b) => ((a << 8) + (+b)) >>> 0, 0) >>> 0;
+const intToIp = n => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
+function maskOf(len){ return len === 0 ? 0 : (0xFFFFFFFF << (32 - len)) >>> 0; }
+function parseCidr(c){ const p = c.split("/"); return { ip: ipToInt(p[0]), len: +p[1] }; }
+/** Adresse réseau normalisée : 10.21.10.1/24 → 10.21.10.0/24 */
+function netOf(c){ const o = parseCidr(c); return intToIp((o.ip & maskOf(o.len)) >>> 0) + "/" + o.len; }
+/** a contient-il b ? (a plus court ou égal, même préfixe) */
+function covers(a, b){ const A = parseCidr(a), B = parseCidr(b); if (A.len > B.len) return false; const m = maskOf(A.len); return ((A.ip & m) >>> 0) === ((B.ip & m) >>> 0); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2 · Modèle : tous les objets ACI de tous les fabrics → un seul graphe
+   ═════════════════════════════════════════════════════════════════════════ */
+const QUERY = netOf(DATA.query.value);
+const SCOPE_FR = DATA.scopeLegend;
+
+/** axe d'un scope : sécurité (classification) vs routage (annonce/import de route) */
+function axisOf(s){ return /-security$/.test(s) ? "sec" : "rt"; }
+/** direction : export = l'ext-EPG pousse le préfixe dehors ; import = le préfixe entre */
+function dirOf(s){ return /^export-/.test(s) ? "out" : "in"; }
+
+const TYPES = {
+  fabric:   { label: "Fabric",        r: 19, glyph: "F"  },
+  vrf:      { label: "VRF",           r: 13, glyph: "V"  },
+  l3out:    { label: "L3Out",         r: 12, glyph: "L3" },
+  extepg:   { label: "ext-EPG",       r: 14, glyph: "EXT"},
+  epg:      { label: "EPG",           r: 11, glyph: "EPG"},
+  bd:       { label: "Bridge Domain", r: 11, glyph: "BD" },
+  contract: { label: "Contract",      r: 9,  glyph: "C"  },
+  subnet:   { label: "Subnet",        r: 12, glyph: ""   }
+};
+
+const nodes = [], links = [], byId = new Map();
+
+function node(o){
+  if (byId.has(o.id)) return byId.get(o.id);
+  o.r = o.r || TYPES[o.type].r;
+  o.x = 0; o.y = 0; o.vx = 0; o.vy = 0; o.fixed = false; o.vis = true;
+  byId.set(o.id, o); nodes.push(o); return o;
+}
+function link(a, b, o){ const l = Object.assign({ a, b, vis: true }, o); links.push(l); return l; }
+
+/* — le subnet recherché : UN SEUL nœud, partagé par tous les fabrics — */
+const subnetNodes = new Map();
+function subnetNode(cidr){
+  const net = netOf(cidr);
+  if (subnetNodes.has(net)) return subnetNodes.get(net);
+  const len = parseCidr(net).len;
+  const isQuery = net === QUERY;
+  // /0 = route par défaut : elle « couvre » tout mais n'est pas un match du subnet
+  // cherché ; on la classe à part pour ne pas polluer la lecture.
+  const isDefault = len === 0;
+  const isAggregate = !isQuery && !isDefault && covers(net, QUERY);
+  const n = node({
+    id: "subnet::" + net, type: "subnet", name: net, fabric: null, shared: true,
+    isQuery, isAggregate, isDefault,
+    r: isQuery ? 27 : (isAggregate ? 16 : 11),
+    raw: { prefix: net, longueur: "/" + len }
+  });
+  subnetNodes.set(net, n); return n;
+}
+
+const fabrics = DATA.fabrics.map(f => ({
+  id: f.id, site: f.site, role: f.role, apic: f.apicVersion, ts: f.backupTs,
+  src: f, collapsed: false, summary: { sec: false, rt: false, exact: false, approx: false, conflict: false }
+}));
+const fabById = new Map(fabrics.map(f => [f.id, f]));
+
+const origin = DATA.fabrics.find(f => f.role === "origin");
+const ORIGIN_TENANT = origin && origin.bd ? origin.bd.tenant : null;
+const ORIGIN_VRF = origin && origin.bd ? origin.bd.vrf : null;
+
+DATA.fabrics.forEach(f => {
+  const F = fabById.get(f.id);
+  const fn = node({ id: f.id, type: "fabric", name: f.id, fabric: f.id, hub: true,
+    raw: { site: f.site, rôle: f.role, "version APIC": f.apicVersion, "backup": f.backupTs } });
+
+  const vrfNode = name => {
+    const v = node({ id: f.id + "::vrf::" + name, type: "vrf", name, fabric: f.id,
+      raw: { name, fabric: f.id } });
+    if (!v._linked) { v._linked = true; link(fn, v, { kind: "struct" }); }
+    return v;
+  };
+  const contractNode = name => {
+    const c = DATA.contracts[name] || {};
+    const n = node({ id: f.id + "::brc::" + name, type: "contract", name, fabric: f.id,
+      dn: c.dn, raw: { name, scope: c.scope, fabric: f.id }, contract: c });
+    return n;
+  };
+
+  /* Bridge Domain + son subnet */
+  if (f.bd){
+    const v = vrfNode(f.bd.vrf);
+    const bd = node({ id: f.id + "::bd::" + f.bd.name, type: "bd", name: f.bd.name, fabric: f.id,
+      dn: f.bd.dn, raw: { tenant: f.bd.tenant, VRF: f.bd.vrf, unicastRoute: f.bd.unicastRoute,
+        arpFlood: f.bd.arpFlood, unkMacUcastAct: f.bd.unkMacUcastAct,
+        subnet: f.bd.subnet.ip, "subnet scope": f.bd.subnet.scope } });
+    link(v, bd, { kind: "struct" });
+    const net = netOf(f.bd.subnet.ip);
+    const sn = subnetNode(f.bd.subnet.ip);
+    const conflict = net === QUERY && (f.bd.tenant !== ORIGIN_TENANT || f.bd.vrf !== ORIGIN_VRF);
+    link(bd, sn, { kind: conflict ? "conflict" : "gateway", gw: f.bd.subnet.ip,
+      why: conflict
+        ? "Même réseau " + QUERY + " mais tenant/VRF différents (" + f.bd.tenant + " / " + f.bd.vrf + ") — collision d'adressage."
+        : "Gateway " + f.bd.subnet.ip + " portée par ce Bridge Domain." });
+    if (conflict) { F.summary.conflict = true; bd.conflict = true; fn.conflict = true; }
+    F.bdNode = bd;
+  }
+
+  /* EPG applicatifs */
+  f.epgs.forEach(e => {
+    const en = node({ id: f.id + "::epg::" + e.name, type: "epg", name: e.name, fabric: f.id,
+      dn: e.dn, raw: { "application profile": e.ap, encap: e.encap, déploiement: e.deployment,
+        domain: e.domain, AAEP: e.aaep || "—",
+        chemins: e.paths.length ? e.paths.map(p => p.tDn + " (" + p.mode + ")").join(" · ") : "aucun static port" },
+      epg: e });
+    if (F.bdNode) link(F.bdNode, en, { kind: "struct" }); else link(fn, en, { kind: "struct" });
+    e.provides.forEach(c => link(contractNode(c), en, { kind: "contract", rel: "provide", side: "EPG" }));
+    e.consumes.forEach(c => link(en, contractNode(c), { kind: "contract", rel: "consume", side: "EPG" }));
+  });
+
+  /* L3Outs → ext-EPGs → subnets */
+  f.l3outs.forEach(o => {
+    const v = vrfNode(o.vrf);
+    const on = node({ id: f.id + "::out::" + o.name, type: "l3out", name: o.name, fabric: f.id,
+      dn: o.dn, raw: { VRF: o.vrf, "L3 domain": o.domain, enforceRtctrl: o.enforceRtctrl,
+        "border leaves": o.nodes.join(", ") } });
+    link(v, on, { kind: "struct" });
+
+    o.extEpgs.forEach(x => {
+      const xn = node({ id: f.id + "::instP::" + o.name + "::" + x.name, type: "extepg", name: x.name,
+        fabric: f.id, dn: x.dn, raw: { L3Out: o.name, prefGrMemb: x.prefGrMemb,
+          "préfixes": x.subnets.map(s => s.ip).join(" · ") }, extepg: x, l3out: o });
+      link(on, xn, { kind: "struct" });
+
+      x.subnets.forEach(s => {
+        const sn = subnetNode(s.ip);
+        const net = netOf(s.ip);
+        const scopes = s.scope.slice();
+        const chans = [];
+        ["sec", "rt"].forEach(ax => {
+          const inAx = scopes.filter(sc => axisOf(sc) === ax);
+          if (!inAx.length) return;
+          // si les deux directions coexistent sur un axe, l'export (annonce) prime visuellement
+          const dir = inAx.some(sc => dirOf(sc) === "out") ? "out" : "in";
+          chans.push({ ax, dir, scopes: inAx });
+        });
+        const isExact = net === QUERY;
+        const isApprox = !isExact && !sn.isDefault && covers(net, QUERY);
+        link(xn, sn, { kind: "scope", chans, scopes, approx: isApprox, exact: isExact,
+          neutral: sn.isDefault, subnetRaw: s });
+        if (isExact || isApprox){
+          if (chans.some(c => c.ax === "sec")) F.summary.sec = true;
+          if (chans.some(c => c.ax === "rt")) F.summary.rt = true;
+          if (chans.some(c => c.ax === "rt" && c.dir === "out")) F.summary.advertises = true;
+          if (chans.some(c => c.ax === "sec" && c.dir === "in")) F.summary.classifies = true;
+          if (isExact) F.summary.exact = true; else F.summary.approx = true;
+        }
+      });
+
+      x.provides.forEach(c => link(contractNode(c), xn, { kind: "contract", rel: "provide", side: "ext-EPG" }));
+      x.consumes.forEach(c => link(xn, contractNode(c), { kind: "contract", rel: "consume", side: "ext-EPG" }));
+    });
+  });
+});
+
+/* Un préfixe AGRÉGAT est cousu au préfixe cherché par un lien « couverture » :
+   sans lui, DC-TOR-05 (qui ne déclare que 10.21.0.0/16) flotterait détaché du
+   pivot et le BFS d'épinglage ne le trouverait jamais. Le trait pointillé fin
+   dit exactement ce qu'il est : une couverture, pas une égalité — et le fabric
+   se retrouve visiblement UN SAUT PLUS LOIN du centre que les matchs exacts. */
+subnetNodes.forEach(sn => {
+  if (!sn.isAggregate) return;
+  link(sn, subnetNodes.get(QUERY), { kind: "cover", approx: true,
+    why: sn.name + " couvre " + QUERY + " sans lui être égal : la classification s'applique, mais avec une granularité plus large que le préfixe recherché." });
+});
+
+/* Liens de synthèse affichés quand un fabric est REPLIÉ : la pastille fabric
+   reste cousue au subnet central avec le résumé de son rôle. */
+const QNODE = subnetNodes.get(QUERY);
+fabrics.forEach(f => {
+  const s = f.summary;
+  if (!s.sec && !s.rt && !s.conflict) return;
+  const chans = [];
+  if (s.sec) chans.push({ ax: "sec", dir: "in", scopes: ["import-security"] });
+  if (s.rt) chans.push({ ax: "rt", dir: s.advertises ? "out" : "in", scopes: ["export-rtctrl"] });
+  f.synth = link(byId.get(f.id), QNODE, {
+    kind: s.conflict && !s.sec && !s.rt ? "conflict" : "scope",
+    chans, scopes: [], approx: s.approx && !s.exact, synthetic: true, vis: false,
+    why: "Synthèse du fabric replié." });
+});
+
+links.forEach((l, i) => { l.idx = i; });
+const nodeIndex = new Map(nodes.map((n, i) => [n.id, i]));
+const adj = nodes.map(() => []);
+links.forEach((l, i) => { if (l.synthetic) return;
+  adj[nodeIndex.get(l.a.id)].push({ i, o: l.b }); adj[nodeIndex.get(l.b.id)].push({ i, o: l.a }); });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3 · SVG
+   ═════════════════════════════════════════════════════════════════════════ */
+const svg = $("#graph");
+const defs = el("defs");
+defs.innerHTML =
+  '<filter id="glowSec" x="-60%" y="-60%" width="220%" height="220%">' +
+    '<feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
+  '<filter id="glowRt" x="-60%" y="-60%" width="220%" height="220%">' +
+    '<feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
+  '<filter id="glowHub" x="-90%" y="-90%" width="280%" height="280%">' +
+    '<feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
+  // Les attributs de présentation SVG ne résolvent PAS var() : le fill des pointes
+  // de flèche passe donc par une classe CSS (cf. .mk-sec / .mk-rt).
+  '<marker id="mkSec" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">' +
+    '<path class="mk-sec" d="M0 0.6 8 4 0 7.4Z"/></marker>' +
+  '<marker id="mkRt" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">' +
+    '<path class="mk-rt" d="M0 0.6 8 4 0 7.4Z"/></marker>';
+svg.appendChild(defs);
+
+const gView   = el("g", { id: "viewport" });
+const gHalos  = el("g", { class: "g-halos" });
+const gLinks  = el("g", { class: "g-links" });
+const gHits   = el("g", { class: "g-hits" });
+const gNodes  = el("g", { class: "g-nodes" });
+const gLabels = el("g", { class: "g-labels" });
+const gSpark  = el("g", { class: "g-spark" });
+[gHalos, gLinks, gHits, gNodes, gLabels, gSpark].forEach(g => gView.appendChild(g));
+svg.appendChild(gView);
+
+/* — halos de fabric — */
+fabrics.forEach(f => {
+  f.halo = el("circle", { class: "halo" + (f.summary.conflict ? " conflict" : ""), r: 10 });
+  f.haloLbl = el("text", { class: "halo-lbl" + (f.summary.conflict ? " conflict" : ""), "text-anchor": "middle" });
+  f.haloLbl.textContent = f.id + " · " + f.site;
+  gHalos.appendChild(f.halo); gHalos.appendChild(f.haloLbl);
+});
+
+/* — traits : un <path> par canal (1 ou 2 par lien) + un <path> de hit-test — */
+const strokes = [];
+links.forEach(l => {
+  const mk = (cls, dir, off, extra) => {
+    const p = el("path", { class: "link " + cls + (extra || "") });
+    gLinks.appendChild(p); strokes.push({ l, p, dir, off, ax: cls === "k-sec" ? "sec" : (cls === "k-rt" ? "rt" : null) });
+    return p;
+  };
+  l.paths = [];
+  if (l.kind === "scope"){
+    const two = l.chans.length === 2;
+    l.chans.forEach((c, i) => {
+      const off = two ? (i === 0 ? -2.4 : 2.4) : 0;
+      const cls = c.ax === "sec" ? "k-sec" : "k-rt";
+      const p = mk(cls, c.dir, off, (l.approx ? " approx" : "") + (l.neutral ? " neutral" : ""));
+      if (!l.neutral) p.setAttribute("marker-end", c.ax === "sec" ? "url(#mkSec)" : "url(#mkRt)");
+      if (l.neutral) p.style.opacity = ".38";
+      l.paths.push(p);
+    });
+    if (!l.chans.length) l.paths.push(mk("k-struct", "out", 0, ""));
+  } else {
+    l.paths.push(mk("k-" + l.kind, "out", 0, ""));
+  }
+  /* Les liens porteurs d'information (portée, conflit, couverture, gateway) sont
+     atteignables au clavier et nommés ; les liens de structure restent purement
+     pointeur pour ne pas noyer l'ordre de tabulation. */
+  l.hit = el("path", { class: "link hit" });
+  l.focusable = l.kind === "scope" || l.kind === "conflict" || l.kind === "cover" || l.kind === "gateway";
+  l.hit.setAttribute("tabindex", l.focusable ? "0" : "-1");
+  if (l.focusable){
+    l.hit.setAttribute("role", "button");
+    l.hit.setAttribute("aria-label", ariaForLink(l));
+  } else {
+    l.hit.setAttribute("aria-hidden", "true");
+  }
+  gHits.appendChild(l.hit);
+});
+
+function ariaForLink(l){
+  const K = { scope: "portée", conflict: "conflit d'adressage", cover: "couverture d'agrégat",
+              gateway: "gateway", contract: "contrat", struct: "conteneur" };
+  let s = "Lien " + (K[l.kind] || l.kind) + " entre " + l.a.name + " et " + l.b.name;
+  if (l.scopes && l.scopes.length) s += ", scopes " + l.scopes.join(", ");
+  if (l.approx) s += ", correspondance par agrégat";
+  return s;
+}
+
+/* — nœuds — */
+nodes.forEach(n => {
+  const g = el("g", { class: "node n-" + n.type + (n.isQuery ? " is-query" : "") + (n.conflict ? " is-conflict" : ""),
+    tabindex: "0", role: "button" });
+  g.setAttribute("aria-label", ariaFor(n));
+  if (n.isQuery){ const p = el("circle", { class: "pulse", r: n.r + 9 }); p.style.opacity = ".28"; g.appendChild(p); }
+  g.appendChild(el("circle", { class: "focusring", r: n.r + 5 }));
+  g.appendChild(el("circle", { class: "ring", r: n.r }));
+  const gl = TYPES[n.type].glyph || (n.type === "subnet" ? "/" + parseCidr(n.name).len : "");
+  if (gl){
+    const t = el("text", { class: "glyph mono", "text-anchor": "middle", y: 3 });
+    t.setAttribute("font-size", n.r >= 15 ? "9.5" : (n.r >= 12 ? "8" : "7"));
+    // pas de fill="" ici : var()/color-mix() ne sont pas résolus dans un attribut
+    // de présentation SVG — la couleur vient de la règle .node .glyph
+    t.textContent = gl; g.appendChild(t);
+  }
+  if (n.isQuery) g.querySelector(".ring").setAttribute("filter", "url(#glowHub)");
+  gNodes.appendChild(g); n.g = g;
+});
+
+function ariaFor(n){
+  const base = TYPES[n.type].label + " " + n.name;
+  return n.fabric ? base + ", fabric " + n.fabric : base + ", objet partagé entre fabrics";
+}
+
+/* — étiquettes — */
+nodes.forEach(n => {
+  const hub = n.type === "subnet" && (n.isQuery || n.isAggregate);
+  const t = el("text", { class: "lbl" + (n.isQuery ? " query" : (hub ? " hub" : "")) +
+    (n.isDefault ? " dim" : "") });
+  t.classList.add("mono");
+  // le halo du cluster porte déjà « DC-XXX · Ville » : pas de doublon sur le nœud
+  t.textContent = n.type === "fabric" ? "" : n.name;
+  gLabels.appendChild(t); n.lbl = t;
+  if (n.isAggregate || n.conflict){
+    const b = el("text", { class: "badge " + (n.conflict ? "conflict" : "approx") });
+    b.textContent = n.conflict ? "CONFLIT" : "AGRÉGAT";
+    gLabels.appendChild(b); n.badge = b;
+  }
+});
+/* badges d'anomalie posés sur les nœuds fabric concernés */
+fabrics.forEach(f => {
+  const fn = byId.get(f.id);
+  if (f.summary.conflict && !fn.badge){
+    const b = el("text", { class: "badge conflict" }); b.textContent = "CONFLIT";
+    gLabels.appendChild(b); fn.badge = b;
+  } else if (f.summary.approx && !f.summary.exact){
+    const b = el("text", { class: "badge approx" }); b.textContent = "MATCH ≈ AGRÉGAT";
+    gLabels.appendChild(b); fn.badge = b;
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4 · Simulation de forces (Coulomb + ressorts + cluster + amortissement)
+   ═════════════════════════════════════════════════════════════════════════ */
+const SIM = {
+  alpha: 1, decay: 0.955, min: 0.014, running: false,
+  REP: 190,          // constante de Coulomb (× charge)
+  REP_CUTOFF: 420,   // rayon de coupure : indispensable à 20 fabrics
+  DAMP: 0.72,
+  CLUSTER: 0.062,    // le cluster doit GAGNER contre l'attraction du subnet central,
+  SHARED: 0.060,     // sinon les fabrics se mélangent et les halos se chevauchent
+  GRAVITY: 0.0030
+};
+/* Longueur au repos et raideur par type de lien. Les liens de scope sont longs et
+   TRÈS souples : ils tirent visiblement vers le centre (la « couture » inter-fabric)
+   sans arracher l'ext-EPG à son fabric. */
+const REST   = { struct: 54, scope: 150, contract: 66, gateway: 84, conflict: 165, cover: 118 };
+const KSPRING = { struct: 0.055, scope: 0.013, contract: 0.022, gateway: 0.026, conflict: 0.014, cover: 0.030 };
+
+let W = 100, H = 100, CX = 50, CY = 50;
+const RING_CAP = 8;   // fabrics par anneau — c'est ce qui fait tenir 20 fabrics
+
+function layoutCenters(){
+  const rect = svg.getBoundingClientRect();
+  W = rect.width || 1200; H = rect.height || 800; CX = W / 2; CY = H / 2;
+  const rings = Math.ceil(fabrics.length / RING_CAP);
+  const base = Math.min(W, H) * (rings > 1 ? 0.21 : 0.36);
+  let idx = 0;
+  for (let r = 0; r < rings; r++){
+    const count = Math.min(RING_CAP, fabrics.length - r * RING_CAP);
+    const rad = base * (1 + r * 1.25);
+    for (let i = 0; i < count; i++, idx++){
+      const a = (i / count) * Math.PI * 2 - Math.PI / 2 + (r % 2 ? Math.PI / count : 0);
+      fabrics[idx].cx = CX + Math.cos(a) * rad;
+      fabrics[idx].cy = CY + Math.sin(a) * rad * 0.86;
+    }
+  }
+}
+
+/** Positions initiales déterministes, puis « explosion contrôlée » depuis le centre. */
+function seedPositions(){
+  layoutCenters();
+  nodes.forEach(n => {
+    let sx, sy;
+    if (n.shared){ sx = CX + (rnd() - 0.5) * 40; sy = CY + (rnd() - 0.5) * 40; }
+    else { const f = fabById.get(n.fabric); const a = rnd() * Math.PI * 2, d = 24 + rnd() * 62;
+      sx = f.cx + Math.cos(a) * d; sy = f.cy + Math.sin(a) * d; }
+    n.sx = sx; n.sy = sy;
+    n.x = CX + (sx - CX) * 0.13; n.y = CY + (sy - CY) * 0.13;
+    n.vx = 0; n.vy = 0;
+  });
+}
+
+function tick(){
+  const a = SIM.alpha;
+  const vis = nodes.filter(n => n.vis);
+  /* répulsion */
+  for (let i = 0; i < vis.length; i++){
+    const p = vis[i]; p.fx = 0; p.fy = 0;
+  }
+  for (let i = 0; i < vis.length; i++){
+    const p = vis[i];
+    for (let j = i + 1; j < vis.length; j++){
+      const q = vis[j];
+      let dx = p.x - q.x, dy = p.y - q.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 > SIM.REP_CUTOFF * SIM.REP_CUTOFF) continue;
+      if (d2 < 1) { d2 = 1; dx = (rnd() - 0.5); dy = (rnd() - 0.5); }
+      const d = Math.sqrt(d2);
+      const f = SIM.REP * (p.r * q.r) / (d2 * 8);
+      const ux = dx / d, uy = dy / d;
+      p.fx += ux * f; p.fy += uy * f; q.fx -= ux * f; q.fy -= uy * f;
+    }
+  }
+  /* ressorts */
+  for (let i = 0; i < links.length; i++){
+    const l = links[i]; if (!l.vis) continue;
+    const p = l.a, q = l.b;
+    const dx = q.x - p.x, dy = q.y - p.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const rest = l.synthetic ? 205 : (REST[l.kind] || 100);
+    const k = l.synthetic ? 0.020 : (KSPRING[l.kind] || 0.03);
+    const f = (d - rest) * k;
+    const ux = dx / d, uy = dy / d;
+    p.fx += ux * f; p.fy += uy * f; q.fx -= ux * f; q.fy -= uy * f;
+  }
+  /* cluster par fabric + gravité, subnets partagés au centre */
+  for (let i = 0; i < vis.length; i++){
+    const n = vis[i];
+    if (n.shared){ n.fx += (CX - n.x) * SIM.SHARED; n.fy += (CY - n.y) * SIM.SHARED; }
+    else { const f = fabById.get(n.fabric);
+      const k = SIM.CLUSTER * (n.type === "fabric" ? 2.2 : 1);
+      n.fx += (f.cx - n.x) * k; n.fy += (f.cy - n.y) * k; }
+    n.fx += (CX - n.x) * SIM.GRAVITY; n.fy += (CY - n.y) * SIM.GRAVITY;
+  }
+  /* intégration amortie */
+  for (let i = 0; i < vis.length; i++){
+    const n = vis[i]; if (n.fixed) { n.vx = 0; n.vy = 0; continue; }
+    n.vx = (n.vx + n.fx) * SIM.DAMP; n.vy = (n.vy + n.fy) * SIM.DAMP;
+    const sp = Math.hypot(n.vx, n.vy), MAX = 34;
+    if (sp > MAX){ n.vx *= MAX / sp; n.vy *= MAX / sp; }
+    n.x += n.vx * a; n.y += n.vy * a;
+  }
+  /* anti-chevauchement (2 passes, suffisant et stable) */
+  for (let pass = 0; pass < 2; pass++){
+    for (let i = 0; i < vis.length; i++){
+      const p = vis[i];
+      for (let j = i + 1; j < vis.length; j++){
+        const q = vis[j];
+        const dx = q.x - p.x, dy = q.y - p.y;
+        const min = p.r + q.r + 7;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= min * min || d2 === 0) continue;
+        const d = Math.sqrt(d2), push = (min - d) / 2;
+        const ux = dx / d, uy = dy / d;
+        if (!p.fixed){ p.x -= ux * push; p.y -= uy * push; }
+        if (!q.fixed){ q.x += ux * push; q.y += uy * push; }
+      }
+    }
+  }
+  SIM.alpha *= SIM.decay;
+}
+
+let raf = 0;
+function loop(){
+  tick(); draw();
+  if (SIM.alpha > SIM.min){ raf = requestAnimationFrame(loop); }
+  else { SIM.running = false; raf = 0;
+         if (needFit){ needFit = false; fitView(); }
+         placeLabels(); status("simulation stabilisée"); }
+}
+function heat(v){
+  SIM.alpha = Math.max(SIM.alpha, v || 0.3);
+  hideLabelsWhileMoving();
+  if (!SIM.running){ SIM.running = true; status("stabilisation…"); raf = requestAnimationFrame(loop); }
+}
+function status(txt){
+  $("#sim-status").textContent = nodes.filter(n => n.vis).length + " nœuds · " +
+    links.filter(l => l.vis).length + " liens · " + txt;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5 · Rendu
+   ═════════════════════════════════════════════════════════════════════════ */
+const view = { tx: 0, ty: 0, k: 1 };
+let needFit = true;
+/** Cadre la vue sur le graphe stabilisé : indispensable dès qu'il y a plusieurs
+    anneaux de fabrics, sinon les clusters extérieurs sortent du viewport. */
+function fitView(){
+  const vis = nodes.filter(n => n.vis); if (!vis.length) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  vis.forEach(n => { x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r);
+                     x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r); });
+  const pad = 62, bw = (x1 - x0) + pad * 2, bh = (y1 - y0) + pad * 2;
+  view.k = Math.min(1.1, Math.max(0.3, Math.min(W / bw, H / bh)));
+  view.tx = (W - (x0 + x1) * view.k) / 2;
+  view.ty = (H - (y0 + y1) * view.k) / 2;
+  applyView();
+}
+function applyView(){ gView.setAttribute("transform",
+  "translate(" + view.tx + "," + view.ty + ") scale(" + view.k + ")"); }
+
+function draw(){
+  nodes.forEach(n => { if (n.vis) n.g.setAttribute("transform", "translate(" + n.x.toFixed(2) + "," + n.y.toFixed(2) + ")"); });
+
+  strokes.forEach(s => {
+    const l = s.l; if (!l.vis) return;
+    let A = l.a, B = l.b;
+    if (s.dir === "in"){ A = l.b; B = l.a; }        // import : la flèche pointe vers l'ext-EPG
+    const dx = B.x - A.x, dy = B.y - A.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const ux = dx / d, uy = dy / d, px = -uy, py = ux;
+    const o = s.off || 0;
+    const x1 = A.x + ux * (A.r + 3) + px * o, y1 = A.y + uy * (A.r + 3) + py * o;
+    const x2 = B.x - ux * (B.r + 6) + px * o, y2 = B.y - uy * (B.r + 6) + py * o;
+    /* légère courbure quand deux canaux coexistent : lecture des axes orthogonaux */
+    if (o){
+      const mx = (x1 + x2) / 2 + px * o * 1.6, my = (y1 + y2) / 2 + py * o * 1.6;
+      s.p.setAttribute("d", "M" + x1.toFixed(1) + " " + y1.toFixed(1) + "Q" + mx.toFixed(1) + " " + my.toFixed(1) + " " + x2.toFixed(1) + " " + y2.toFixed(1));
+    } else {
+      s.p.setAttribute("d", "M" + x1.toFixed(1) + " " + y1.toFixed(1) + "L" + x2.toFixed(1) + " " + y2.toFixed(1));
+    }
+    s.x1 = x1; s.y1 = y1; s.x2 = x2; s.y2 = y2;
+  });
+  links.forEach(l => { if (l.vis) l.hit.setAttribute("d",
+    "M" + l.a.x.toFixed(1) + " " + l.a.y.toFixed(1) + "L" + l.b.x.toFixed(1) + " " + l.b.y.toFixed(1)); });
+
+  fabrics.forEach(f => {
+    const own = nodes.filter(n => n.vis && n.fabric === f.id);
+    if (!own.length){ f.halo.style.display = "none"; f.haloLbl.style.display = "none"; return; }
+    f.halo.style.display = ""; f.haloLbl.style.display = "";
+    let sx = 0, sy = 0; own.forEach(n => { sx += n.x; sy += n.y; });
+    const cx = sx / own.length, cy = sy / own.length;
+    let r = 0; own.forEach(n => { r = Math.max(r, Math.hypot(n.x - cx, n.y - cy) + n.r); });
+    r += 20;
+    f.halo.setAttribute("cx", cx.toFixed(1)); f.halo.setAttribute("cy", cy.toFixed(1));
+    f.halo.setAttribute("r", r.toFixed(1));
+    f.haloLbl.setAttribute("x", cx.toFixed(1)); f.haloLbl.setAttribute("y", (cy - r - 7).toFixed(1));
+    f.hx = cx; f.hy = cy; f.hr = r;
+  });
+
+  positionLabels();   // les étiquettes suivent toujours ; `labelsLive` ne pilote QUE
+}                     // le placement anti-collision, recalculé à l'arrêt seulement
+
+/* — étiquettes : placement anti-collision, calculé seulement à l'arrêt — */
+let labelsLive = false;
+const PRIO = { subnet: 0, fabric: 1, l3out: 2, extepg: 3, bd: 4, epg: 5, contract: 6, vrf: 7 };
+function hideLabelsWhileMoving(){
+  labelsLive = false;
+  nodes.forEach(n => {
+    const keep = n.vis && (n.isQuery || n.type === "fabric" || n.type === "subnet");
+    n.lbl.style.display = keep ? "" : "none";
+    if (n.badge) n.badge.style.display = keep ? "" : "none";
+  });
+  positionLabels();
+}
+function positionLabels(){
+  nodes.forEach(n => {
+    if (!n.vis || n.lbl.style.display === "none") return;
+    const p = n.lp || { dx: 0, dy: -(n.r + 8), anchor: "middle" };
+    n.lbl.setAttribute("x", (n.x + p.dx).toFixed(1));
+    n.lbl.setAttribute("y", (n.y + p.dy).toFixed(1));
+    n.lbl.setAttribute("text-anchor", p.anchor);
+    if (n.badge){
+      n.badge.setAttribute("x", (n.x + p.dx).toFixed(1));
+      n.badge.setAttribute("y", (n.y + p.dy + (p.dy < 0 ? -12 : 12)).toFixed(1));
+      n.badge.setAttribute("text-anchor", p.anchor);
+    }
+  });
+}
+function placeLabels(){
+  const placed = [];
+  // le rectangle réservé doit couvrir le badge (CONFLIT / MATCH ≈ AGRÉGAT), qui est
+  // souvent plus large que l'étiquette — voire seul quand l'étiquette est vide
+  const w = n => Math.max(
+    (n.lbl.textContent || "").length * (n.isQuery ? 7.9 : 6.6) + 8,
+    n.badge ? n.badge.textContent.length * 6.5 + 8 : 0);
+  const h = 13;
+  const list = nodes.filter(n => n.vis).sort((a, b) => (PRIO[a.type] - PRIO[b.type]) || (b.r - a.r));
+  // les nœuds eux-mêmes sont des obstacles
+  nodes.forEach(n => { if (n.vis) placed.push({ x: n.x - n.r, y: n.y - n.r, w: n.r * 2, h: n.r * 2 }); });
+  const hit = r => placed.some(p => !(r.x + r.w < p.x || r.x > p.x + p.w || r.y + r.h < p.y || r.y > p.y + p.h));
+  list.forEach(n => {
+    const W2 = w(n), cand = [
+      { dx: 0, dy: -(n.r + 8), anchor: "middle" },
+      { dx: 0, dy: n.r + 15,  anchor: "middle" },
+      { dx: n.r + 7, dy: 4,   anchor: "start" },
+      { dx: -(n.r + 7), dy: 4, anchor: "end" },
+      { dx: 0, dy: -(n.r + 21), anchor: "middle" },
+      { dx: 0, dy: n.r + 28,  anchor: "middle" }
+    ];
+    let ok = null;
+    for (const c of cand){
+      const x = n.x + c.dx - (c.anchor === "middle" ? W2 / 2 : (c.anchor === "end" ? W2 : 0));
+      const r = { x: x - 2, y: n.y + c.dy - h, w: W2 + 4, h: h + 3 + (n.badge ? 13 : 0) };
+      if (!hit(r)){ ok = c; placed.push(r); break; }
+    }
+    // pas de place → étiquette omise ; le nœud reste survolable et focusable
+    n.lp = ok || cand[0];
+    const show = !!ok || n.isQuery || n.type === "fabric";
+    n.lbl.style.display = show ? "" : "none";
+    if (n.badge) n.badge.style.display = show ? "" : "none";
+    n.lbl.classList.toggle("dim", n.type === "vrf" || n.type === "contract");
+  });
+  labelsLive = true;
+  positionLabels();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6 · Mise en évidence (survol / sélection / épingles)
+   ═════════════════════════════════════════════════════════════════════════ */
+let hoverId = null, selId = null, selLink = null;
+const pinnedLinks = new Set(), pinnedNodes = new Set();
+
+function neighborhood(id){
+  const out = { n: new Set([id]), l: new Set() };
+  const i = nodeIndex.get(id);
+  adj[i].forEach(e => { if (links[e.i].vis && e.o.vis){ out.n.add(e.o.id); out.l.add(e.i); } });
+  return out;
+}
+function applyHighlight(){
+  // selLink peut valoir 0 (index de lien valide) : tester la nullité, pas la véracité
+  const focus = hoverId || selId || selLink !== null || pinnedLinks.size > 0;
+  const N = new Set(pinnedNodes), L = new Set(pinnedLinks);
+  const add = id => { const h = neighborhood(id); h.n.forEach(x => N.add(x)); h.l.forEach(x => L.add(x)); };
+  if (selId) add(selId);
+  if (hoverId) add(hoverId);
+  if (selLink != null){ const l = links[selLink]; L.add(selLink); N.add(l.a.id); N.add(l.b.id); }
+  gLinks.dataset.focus = focus ? "1" : "0";
+  gNodes.dataset.focus = focus ? "1" : "0";
+  gLabels.dataset.focus = focus ? "1" : "0";
+  nodes.forEach(n => {
+    n.g.classList.toggle("on", N.has(n.id));
+    n.g.classList.toggle("sel", n.id === selId);
+    n.lbl.classList.toggle("on", N.has(n.id));
+    if (n.badge) n.badge.classList.toggle("on", N.has(n.id));
+    if (focus && N.has(n.id) && !labelsLive){ /* laisse le placement gérer */ }
+  });
+  strokes.forEach(s => { const i = s.l.idx; s.p.classList.toggle("on", L.has(i));
+    s.p.classList.toggle("pinned", pinnedLinks.has(i)); });
+}
+
+/* double-clic = épingler le chemin jusqu'au subnet recherché (BFS) */
+function pinPathTo(id){
+  const target = QNODE.id;
+  if (id === target) return;
+  const prev = new Map([[id, null]]);
+  const q = [id];
+  while (q.length){
+    const cur = q.shift();
+    if (cur === target) break;
+    adj[nodeIndex.get(cur)].forEach(e => {
+      if (!links[e.i].vis || !e.o.vis || prev.has(e.o.id)) return;
+      prev.set(e.o.id, { from: cur, li: e.i }); q.push(e.o.id);
+    });
+  }
+  if (!prev.has(target)) return;
+  let cur = target;
+  while (prev.get(cur)){ const s = prev.get(cur); pinnedLinks.add(s.li); pinnedNodes.add(cur); cur = s.from; }
+  pinnedNodes.add(cur);
+  applyHighlight(); renderPins();
+}
+function clearPins(){ pinnedLinks.clear(); pinnedNodes.clear(); renderPins(); applyHighlight(); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7 · Panneau de détail
+   ═════════════════════════════════════════════════════════════════════════ */
+const D = $("#detail-body");
+const esc = s => String(s == null ? "—" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const kv = o => '<dl class="kv">' + Object.keys(o).map(k =>
+  "<dt>" + esc(k) + '</dt><dd class="mono">' + esc(o[k]) + "</dd>").join("") + "</dl>";
+
+function renderPins(){
+  const box = document.getElementById("pinbox");
+  if (!box) return;
+  box.innerHTML = pinnedLinks.size
+    ? '<span class="tag tag-outline">' + pinnedLinks.size + " liens épinglés</span>"
+    : '<span class="text-muted" style="font-size:11.5px">Aucun chemin épinglé</span>';
+}
+
+function showEmpty(){
+  selId = null; selLink = null;
+  D.innerHTML =
+    '<div class="empty">' +
+      "<p>Le nœud central <span class=\"mono\">" + esc(QUERY) + "</span> est <b>unique</b> : " +
+      "chaque fabric qui le déclare y est physiquement rattaché. La tension des liens, c'est le couplage inter-fabric.</p>" +
+      "<p>Cliquez un nœud ou un lien pour ses attributs bruts et son DN. Double-cliquez pour épingler le chemin jusqu'au subnet.</p>" +
+    "</div>" +
+    '<hr class="hr">' +
+    "<h6>Chemin inter-fabric</h6>" +
+    '<div class="scope-card rt"><div class="hd"><span class="axis-dot" style="background:var(--sig-rt)"></span>Annoncé par</div>' +
+      '<div class="bd mono">' + fabrics.filter(x => x.summary.advertises).map(x => x.id).join(" · ") + "</div></div>" +
+    '<div class="scope-card sec"><div class="hd"><span class="axis-dot" style="background:var(--sig-sec)"></span>Classifié par</div>' +
+      '<div class="bd mono">' + fabrics.filter(x => x.summary.classifies).map(x => x.id).join(" · ") + "</div></div>" +
+    (fabrics.some(x => x.summary.approx && !x.summary.exact)
+      ? '<div class="note"><b>Match approximatif.</b> ' +
+        fabrics.filter(x => x.summary.approx && !x.summary.exact).map(x => x.id).join(", ") +
+        " ne déclare pas " + esc(QUERY) + " mais un agrégat qui le couvre : la classification fonctionne, la granularité non." +
+        "</div>" : "") +
+    (fabrics.some(x => x.summary.conflict)
+      ? '<div class="note warn"><b>Conflit d\'adressage.</b> ' +
+        fabrics.filter(x => x.summary.conflict).map(x => x.id).join(", ") +
+        " porte le même réseau dans un autre tenant/VRF, sans L3Out : ce n'est pas le même service." +
+        "</div>" : "") +
+    '<div class="pinlist" id="pinbox"></div>';
+  renderPins();
+}
+
+function detailNode(n){
+  const T = TYPES[n.type].label;
+  let html = '<div class="det-kicker">' + esc(T) + (n.fabric ? " · " + esc(n.fabric) : " · partagé") + "</div>" +
+             '<div class="det-title mono">' + esc(n.name) + "</div>" + kv(n.raw || {});
+
+  if (n.type === "subnet"){
+    const inc = links.filter(l => l.vis && !l.synthetic && (l.a === n || l.b === n));
+    html += '<hr class="hr"><h6>Rôles déclarés</h6>';
+    inc.forEach(l => {
+      const other = l.a === n ? l.b : l.a;
+      if (l.kind === "scope"){
+        l.chans.forEach(c => {
+          html += '<div class="scope-card ' + c.ax + '"><div class="hd">' +
+            '<span class="axis-dot" style="background:var(--sig-' + c.ax + ')"></span>' +
+            (c.ax === "sec" ? "Sécurité" : "Routage") + " · " + esc(other.fabric) + "</div>" +
+            '<div class="bd"><span class="mono">' + esc(other.name) + "</span> — " +
+            c.scopes.map(s => "<b>" + esc(s) + "</b> : " + esc(SCOPE_FR[s])).join("<br>") + "</div></div>";
+        });
+      } else if (l.kind === "gateway" || l.kind === "conflict"){
+        html += '<div class="scope-card"><div class="hd">' + (l.kind === "conflict" ? "Conflit" : "Gateway") +
+          " · " + esc(other.fabric) + '</div><div class="bd">' + esc(l.why) + "</div></div>";
+      }
+    });
+    if (n.isQuery) html += '<div class="note"><b>Nœud pivot.</b> Ce préfixe est déclaré dans ' +
+      fabrics.filter(f => f.summary.sec || f.summary.rt || f.summary.conflict).length +
+      " fabrics. Sécurité et routage sont deux axes indépendants : un ext-EPG peut annoncer sans classifier, et l'inverse.</div>";
+    if (n.isAggregate) html += '<div class="note"><b>Agrégat.</b> Ce préfixe couvre ' + esc(QUERY) +
+      " sans lui être égal — le match est approximatif.</div>";
+  }
+
+  if (n.type === "extepg" && n.extepg){
+    html += '<hr class="hr"><h6>l3extSubnet</h6>';
+    n.extepg.subnets.forEach(s => {
+      const net = netOf(s.ip), exact = net === QUERY, approx = !exact && parseCidr(net).len > 0 && covers(net, QUERY);
+      html += '<div class="scope-card"><div class="hd"><span class="mono">' + esc(s.ip) + "</span>" +
+        (exact ? '<span class="tag tag-outline" style="margin-left:auto">match exact</span>' :
+         approx ? '<span class="tag tag-neutral" style="margin-left:auto">agrégat</span>' : "") +
+        '</div><div class="bd">' + s.scope.map(sc =>
+          '<span style="color:var(--sig-' + axisOf(sc) + ')">●</span> <b>' + esc(sc) + "</b> — " + esc(SCOPE_FR[sc])
+        ).join("<br>") + "</div></div>";
+    });
+  }
+
+  if (n.type === "epg" && n.epg){
+    const e = n.epg;
+    html += '<hr class="hr"><h6>Déploiement</h6><div class="empty">' +
+      (e.deployment === "aaep"
+        ? "Déployé via <b>AAEP</b> (aucun static port sur l'EPG) — le rattachement passe par le profil d'interface."
+        : "Déployé en <b>static port</b> sur " + e.paths.length + " chemin(s).") + "</div>";
+  }
+
+  if (n.type === "contract" && n.contract && n.contract.subjects){
+    html += '<hr class="hr"><h6>Subjects &amp; filtres</h6>';
+    n.contract.subjects.forEach(s => {
+      html += '<div class="scope-card"><div class="hd mono">' + esc(s.name) + "</div>" +
+        s.filters.map(f => '<div class="bd mono">' + esc(f.name) + " · " + esc(f.etherT) + "/" + esc(f.prot) +
+          " · " + esc(f.dFromPort) + "→" + esc(f.dToPort) + "</div>").join("") + "</div>";
+    });
+    const rel = links.filter(l => l.kind === "contract" && (l.a === n || l.b === n));
+    html += '<div class="empty" style="margin-top:var(--space-3)">' + rel.map(l => {
+      const other = l.a === n ? l.b : l.a;
+      return '<span class="mono">' + esc(other.name) + "</span> — " + (l.rel === "provide" ? "provide" : "consume");
+    }).join("<br>") + "</div>";
+  }
+
+  if (n.type === "fabric"){
+    const f = fabById.get(n.id), s = f.summary;
+    html += '<hr class="hr"><h6>Rôle vis-à-vis de ' + esc(QUERY) + "</h6>";
+    if (s.advertises) html += '<div class="scope-card rt"><div class="hd"><span class="axis-dot" style="background:var(--sig-rt)"></span>Annonce le préfixe</div><div class="bd">export-rtctrl — source du chemin inter-fabric.</div></div>';
+    if (s.classifies) html += '<div class="scope-card sec"><div class="hd"><span class="axis-dot" style="background:var(--sig-sec)"></span>Classifie le trafic</div><div class="bd">import-security — destination du chemin inter-fabric.</div></div>';
+    if (s.approx && !s.exact) html += '<div class="note"><b>Match par agrégat.</b> Le préfixe exact n\'est pas déclaré.</div>';
+    if (s.conflict) html += '<div class="note warn"><b>Anomalie.</b> Même réseau dans un autre tenant/VRF, aucun L3Out : ce fabric n\'appartient pas au chemin.</div>';
+    if (!s.sec && !s.rt && !s.conflict) html += '<div class="empty">Aucune déclaration du préfixe.</div>';
+    html += '<div class="det-actions"><button class="btn btn-secondary" type="button" data-act="collapse" data-fab="' +
+      esc(f.id) + '">' + (f.collapsed ? "Déplier" : "Replier") + " ce fabric</button></div>";
+  }
+
+  if (n.dn) html += '<div class="dn mono">' + esc(n.dn) + "</div>";
+  html += '<div class="det-actions">' +
+    '<button class="btn btn-primary" type="button" data-act="pin" data-id="' + esc(n.id) + '">Épingler le chemin</button>' +
+    '<button class="btn btn-secondary" type="button" data-act="clear">Effacer</button></div>' +
+    '<div class="pinlist" id="pinbox"></div>';
+  D.innerHTML = html; renderPins();
+}
+
+function detailLink(i){
+  const l = links[i];
+  let html = '<div class="det-kicker">Lien · ' + esc(l.a.fabric || l.b.fabric || "inter-fabric") + "</div>" +
+    '<div class="det-title mono">' + esc(l.a.name) + " → " + esc(l.b.name) + "</div>";
+  if (l.kind === "scope"){
+    html += kv({ "objet": "l3extSubnet", "préfixe": l.subnetRaw ? l.subnetRaw.ip : l.b.name,
+      "correspondance": l.exact ? "exacte" : (l.approx ? "par agrégat" : "hors sujet"),
+      "aggregate": l.subnetRaw && l.subnetRaw.aggregate ? l.subnetRaw.aggregate : "(vide)" });
+    html += '<hr class="hr"><h6>Scopes</h6>';
+    (l.scopes || []).forEach(sc => {
+      html += '<div class="scope-card ' + axisOf(sc) + '"><div class="hd">' +
+        '<span class="axis-dot" style="background:var(--sig-' + axisOf(sc) + ')"></span>' + esc(sc) +
+        '</div><div class="bd">' + esc(SCOPE_FR[sc]) + " · axe <b>" +
+        (axisOf(sc) === "sec" ? "sécurité" : "routage") + "</b>, sens " +
+        (dirOf(sc) === "out" ? "sortant (annonce)" : "entrant (classification)") + "</div></div>";
+    });
+    if (l.approx) html += '<div class="note"><b>Match par agrégat.</b> ' + esc(l.b.name) + " couvre " + esc(QUERY) + " mais ne lui est pas égal.</div>";
+  } else if (l.kind === "conflict"){
+    html += '<div class="note warn"><b>Conflit.</b> ' + esc(l.why) + "</div>";
+  } else if (l.kind === "cover"){
+    html += kv({ "relation": "couverture de préfixe", "agrégat": l.a.name, "cherché": l.b.name });
+    html += '<div class="note"><b>Match par agrégat.</b> ' + esc(l.why) + "</div>";
+  } else if (l.kind === "gateway"){
+    html += kv({ "gateway": l.gw, "porté par": l.a.name });
+  } else if (l.kind === "contract"){
+    html += kv({ "relation": l.rel, "côté": l.side });
+  } else {
+    html += kv({ "relation": "conteneur" });
+  }
+  html += '<div class="det-actions"><button class="btn btn-secondary" type="button" data-act="clear">Effacer</button></div>' +
+    '<div class="pinlist" id="pinbox"></div>';
+  D.innerHTML = html; renderPins();
+}
+
+D.addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const act = b.dataset.act;
+  if (act === "pin") pinPathTo(b.dataset.id);
+  else if (act === "clear") clearPins();
+  else if (act === "collapse"){ const f = fabById.get(b.dataset.fab); f.collapsed = !f.collapsed; syncFabRows(); refresh(); detailNode(byId.get(f.id)); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8 · Interactions pointeur / clavier
+   ═════════════════════════════════════════════════════════════════════════ */
+function toWorld(ev){
+  const r = svg.getBoundingClientRect();
+  return { x: (ev.clientX - r.left - view.tx) / view.k, y: (ev.clientY - r.top - view.ty) / view.k };
+}
+
+nodes.forEach(n => {
+  const g = n.g;
+  g.addEventListener("pointerenter", () => { hoverId = n.id; applyHighlight(); });
+  g.addEventListener("pointerleave", () => { if (hoverId === n.id) hoverId = null; applyHighlight(); });
+  g.addEventListener("focus", () => { hoverId = n.id; applyHighlight(); });
+  g.addEventListener("blur", () => { if (hoverId === n.id) hoverId = null; applyHighlight(); });
+  g.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " "){ e.preventDefault(); selId = n.id; selLink = null; detailNode(n); applyHighlight(); }
+    if (e.key === "p" || e.key === "P"){ e.preventDefault(); pinPathTo(n.id); }
+  });
+  g.addEventListener("dblclick", e => { e.stopPropagation();
+    if (n.type === "fabric"){ const f = fabById.get(n.id); f.collapsed = !f.collapsed; syncFabRows(); refresh(); }
+    else pinPathTo(n.id); });
+
+  let moved = false, id0 = null;
+  g.addEventListener("pointerdown", e => {
+    e.stopPropagation(); moved = false; id0 = e.pointerId;
+    g.setPointerCapture(id0); n.fixed = true; heat(0.34);
+  });
+  g.addEventListener("pointermove", e => {
+    if (id0 === null || !n.fixed) return;
+    const p = toWorld(e);
+    if (Math.abs(p.x - n.x) + Math.abs(p.y - n.y) > 1.5) moved = true;
+    n.x = p.x; n.y = p.y; n.vx = 0; n.vy = 0;
+    if (!SIM.running) { draw(); } else heat(0.26);
+  });
+  const end = () => {
+    if (id0 === null) return;
+    try { g.releasePointerCapture(id0); } catch (_){}
+    id0 = null; n.fixed = false; heat(0.3);
+    if (!moved){ selId = n.id; selLink = null; detailNode(n); applyHighlight(); }
+  };
+  g.addEventListener("pointerup", end);
+  g.addEventListener("pointercancel", end);
+});
+
+links.forEach((l, i) => {
+  const enter = () => { if (selLink === null) gLinks.dataset.focus = "1"; l.paths.forEach(p => p.classList.add("on")); };
+  const leave = () => { if (selLink !== i) l.paths.forEach(p => p.classList.remove("on")); applyHighlight(); };
+  const open  = () => { selLink = i; selId = null; detailLink(i); applyHighlight(); };
+  l.hit.addEventListener("pointerenter", enter);
+  l.hit.addEventListener("pointerleave", leave);
+  l.hit.addEventListener("click", e => { e.stopPropagation(); open(); });
+  if (l.focusable){
+    l.hit.addEventListener("focus", enter);
+    l.hit.addEventListener("blur", leave);
+    l.hit.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " "){ e.preventDefault(); open(); }
+    });
+  }
+});
+
+/* pan + zoom */
+let pan = null;
+svg.addEventListener("pointerdown", e => {
+  if (e.target.closest(".node") || e.target.closest(".hit")) return;
+  pan = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
+  svg.classList.add("dragging"); svg.setPointerCapture(e.pointerId);
+});
+svg.addEventListener("pointermove", e => {
+  if (!pan) return;
+  view.tx = pan.tx + (e.clientX - pan.x); view.ty = pan.ty + (e.clientY - pan.y); applyView();
+});
+svg.addEventListener("pointerup", e => {
+  if (pan && Math.abs(e.clientX - pan.x) + Math.abs(e.clientY - pan.y) < 3){ selId = null; selLink = null; showEmpty(); applyHighlight(); }
+  pan = null; svg.classList.remove("dragging");
+});
+svg.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const k2 = Math.min(2.6, Math.max(0.35, view.k * (e.deltaY < 0 ? 1.11 : 0.9)));
+  view.tx = mx - (mx - view.tx) * (k2 / view.k);
+  view.ty = my - (my - view.ty) * (k2 / view.k);
+  view.k = k2; applyView();
+}, { passive: false });
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape"){ clearPins(); selId = null; selLink = null; hoverId = null; showEmpty(); applyHighlight(); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9 · Filtres, repli, visibilité
+   ═════════════════════════════════════════════════════════════════════════ */
+const typeOn = { fabric: true, vrf: true, l3out: true, extepg: true, epg: true, bd: true, contract: true, subnet: true };
+
+function computeVisibility(){
+  nodes.forEach(n => {
+    const f = n.fabric ? fabById.get(n.fabric) : null;
+    let v = typeOn[n.type] !== false;
+    if (f && f.hidden) v = false;
+    if (f && f.collapsed && n.type !== "fabric") v = false;
+    if (n.type === "fabric" && f.hidden) v = false;
+    if (n.isQuery) v = true;                       // le pivot ne disparaît jamais
+    n.vis = v;
+  });
+  links.forEach(l => {
+    if (l.synthetic){
+      const f = fabById.get(l.a.fabric || l.a.id);
+      l.vis = !!(f && f.collapsed && !f.hidden);
+    } else {
+      l.vis = l.a.vis && l.b.vis;
+    }
+    const disp = l.vis ? "" : "none";
+    l.paths.forEach(p => p.style.display = disp);
+    l.hit.style.display = disp;
+  });
+  nodes.forEach(n => {
+    n.g.style.display = n.vis ? "" : "none";
+    n.lbl.style.display = n.vis ? n.lbl.style.display : "none";
+    if (n.badge) n.badge.style.display = n.vis ? n.badge.style.display : "none";
+  });
+}
+function refresh(){ computeVisibility(); needFit = true; heat(0.42); }
+
+/* rail gauche — fabrics */
+const fabList = $("#fab-list");
+fabrics.forEach(f => {
+  const b = document.createElement("button");
+  b.className = "fabrow" + (f.summary.conflict ? " is-conflict" : (f.summary.approx && !f.summary.exact ? " is-approx" : ""));
+  b.type = "button"; b.dataset.fab = f.id;
+  const roleFr = { origin: "origine", dr: "DR", transit: "transit", consumer: "consommateur", conflict: "conflit" }[f.role] || f.role;
+  b.innerHTML = '<span class="eye" style="background:' +
+      (f.summary.conflict ? "var(--sig-conflict)" : f.summary.advertises ? "var(--sig-rt)" : f.summary.sec ? "var(--sig-sec)" : "transparent") +
+    '"></span><span class="nm mono">' + f.id + '</span><span class="rl">' + roleFr + "</span>";
+  b.title = "Clic : replier / déplier · Alt+clic : masquer";
+  b.addEventListener("click", e => {
+    if (e.altKey){ f.hidden = !f.hidden; } else { f.collapsed = !f.collapsed; }
+    syncFabRows(); refresh();
+  });
+  fabList.appendChild(b); f.row = b;
+});
+function syncFabRows(){ fabrics.forEach(f => {
+  f.row.dataset.collapsed = (f.collapsed || f.hidden) ? "1" : "0";
+  f.row.style.textDecoration = f.hidden ? "line-through" : "none"; }); }
+
+/* rail gauche — types */
+const typeList = $("#type-list");
+Object.keys(TYPES).forEach(t => {
+  const count = nodes.filter(n => n.type === t).length;
+  const lab = document.createElement("label");
+  lab.className = "chk";
+  lab.innerHTML = '<input type="checkbox" checked><span class="box"></span><span>' +
+    TYPES[t].label + '</span><span class="cnt mono">' + count + "</span>";
+  lab.querySelector("input").addEventListener("change", e => { typeOn[t] = e.target.checked; refresh(); });
+  typeList.appendChild(lab);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   10 · Chemin inter-fabric joué une fois (jamais en boucle)
+   ═════════════════════════════════════════════════════════════════════════ */
+let sparkRAF = 0;
+function playPath(){
+  if (sparkRAF) cancelAnimationFrame(sparkRAF);
+  gSpark.textContent = "";
+  const outbound = strokes.filter(s => s.l.vis && s.ax === "rt" && s.dir === "out" && (s.l.b === QNODE || s.l.a === QNODE) && !s.l.approx);
+  const inbound  = strokes.filter(s => s.l.vis && s.ax === "sec" && s.dir === "in" && (s.l.b === QNODE || s.l.a === QNODE));
+  /* Les traits sont DÉJÀ dessinés dans le sens du flux (export : ext-EPG → subnet,
+     import : subnet → ext-EPG), donc u va toujours de x1,y1 vers x2,y2. */
+  const seq = outbound.map(s => ({ s, t0: 0, t1: 750 }))
+    .concat(inbound.map((s, i) => ({ s, t0: 620, t1: 1560 + i * 40 })));
+  if (!seq.length) return;
+  seq.forEach(o => { o.dot = el("circle", { class: "spark", r: 3.2 }); gSpark.appendChild(o.dot); });
+  const T0 = performance.now(), END = 1750;
+  (function step(now){
+    const t = now - T0;
+    seq.forEach(o => {
+      const u = (t - o.t0) / (o.t1 - o.t0);
+      if (u < 0 || u > 1){ o.dot.style.opacity = 0; return; }
+      const x = o.s.x1 + (o.s.x2 - o.s.x1) * u;
+      const y = o.s.y1 + (o.s.y2 - o.s.y1) * u;
+      o.dot.setAttribute("cx", x.toFixed(1)); o.dot.setAttribute("cy", y.toFixed(1));
+      o.dot.style.opacity = Math.sin(Math.PI * u) * 0.95;
+    });
+    if (t < END) sparkRAF = requestAnimationFrame(step);
+    else { gSpark.textContent = ""; sparkRAF = 0; }
+  })(T0);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   11 · Amorçage
+   ═════════════════════════════════════════════════════════════════════════ */
+const FABRIC_AUTOCOLLAPSE = 10;   // au-delà, on replie ce qui n'a pas de match exact
+function autoCollapse(){
+  if (fabrics.length <= FABRIC_AUTOCOLLAPSE) return;
+  fabrics.forEach(f => { if (!f.summary.exact) f.collapsed = true; });
+}
+
+function boot(){
+  $("#q-val").textContent = DATA.query.value;
+  const hits = fabrics.filter(f => f.summary.sec || f.summary.rt || f.summary.conflict).length;
+  $("#q-count").textContent = hits + " fabrics concernés";
+  const nApprox = fabrics.filter(f => f.summary.approx && !f.summary.exact).length;
+  const nConf   = fabrics.filter(f => f.summary.conflict).length;
+  const flags = [];
+  if (nApprox) flags.push(nApprox + (nApprox > 1 ? " matchs" : " match") + " par agrégat");
+  if (nConf) flags.push(nConf + (nConf > 1 ? " conflits" : " conflit"));
+  $("#q-flags").textContent = flags.join(" · ") || "aucune anomalie";
+
+  autoCollapse(); syncFabRows();
+  seedPositions(); computeVisibility(); hideLabelsWhileMoving();
+  view.tx = 0; view.ty = 0; view.k = 1; applyView();
+  SIM.alpha = 1; SIM.running = true; status("déploiement du graphe…");
+  raf = requestAnimationFrame(loop);
+  showEmpty(); applyHighlight();
+}
+
+$("#btn-replay").addEventListener("click", () => { clearPins(); seedPositions(); computeVisibility(); hideLabelsWhileMoving(); needFit = true; SIM.alpha = 1; heat(1); });
+$("#btn-reset").addEventListener("click", () => { nodes.forEach(n => n.fixed = false); needFit = true; heat(0.5); });
+$("#btn-collapse").addEventListener("click", e => {
+  const any = fabrics.some(f => !f.collapsed);
+  fabrics.forEach(f => f.collapsed = any);
+  e.currentTarget.textContent = any ? "Tout déplier" : "Tout replier";
+  syncFabRows(); refresh();
+});
+$("#btn-path").addEventListener("click", playPath);
+
+let rz = 0;
+window.addEventListener("resize", () => {
+  clearTimeout(rz);
+  rz = setTimeout(() => { layoutCenters(); heat(0.32); }, 140);
+});
+
+boot();
+</script>
+</body>
+</html>

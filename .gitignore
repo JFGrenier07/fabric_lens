@@ -1,0 +1,41 @@
+# ── Sorties de build ────────────────────────────────────────────────────────
+# Reconstruites à chaque exécution par build_page.py — les versionner ferait
+# un diff de 660 Ko à chaque changement d'une virgule.
+fabric-lens.html
+FabricLens.zip
+FabricLens.tar.gz
+
+# deploy/ n'est que des COPIES des fichiers sources. Le versionner, c'est
+# garantir qu'un jour l'un sera corrige et pas l'autre. Regenere avec :
+#     python3 make_deploy.py
+deploy/
+
+# ── Données ─────────────────────────────────────────────────────────────────
+# Ces fichiers contiennent la configuration de fabriques ACI. Ils sont
+# reproductibles (fl_extract.py + resolve.py) et n'ont rien à faire dans un
+# dépôt : un backup de production ne se versionne pas.
+web/data/fabrics.json
+web/data/digests.json
+tests/data/
+tests/reference/
+data/
+prototypes/data/
+
+# ── Configuration locale ────────────────────────────────────────────────────
+# fabrics.csv porte les chemins réels des backups. Seul l'exemple est versionné.
+scripts/fabrics.csv
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ── Divers ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

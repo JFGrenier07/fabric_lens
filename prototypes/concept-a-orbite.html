@@ -1,0 +1,1426 @@
+<!--
+  FABRIC LENS — CONCEPT A · « CONSTELLATION ORBITALE »
+  ====================================================
+  CONCEPT (3 lignes)
+  Le préfixe cherché est un noyau lumineux au centre ; les fabrics gravitent autour de lui
+  et leur POSITION SUR L'AXE HORIZONTAL est l'information : à gauche ceux qui ANNONCENT le
+  préfixe (export-rtctrl / routage), à droite ceux qui le CLASSIFIENT (import-security /
+  sécurité), au sommet ceux qui font les deux. Les arcs lumineux traversant le noyau sont
+  les chemins inter-fabric (annonceur → classificateur) ; ce qui n'a pas d'orbite (conflit
+  de VRF) est physiquement détaché en bas de scène.
+
+  PASSAGE À 20 FABRICS (dégradation contrôlée, implémentée)
+  - `layout()` place les fabrics sur UNE ellipse tant qu'il y en a ≤ 9 ; au-delà il en
+    répartit une partie sur une ellipse intérieure (rayon ×0.58) en alternance, ce qui
+    double la capacité angulaire sans changer la sémantique de l'axe.
+  - Au-delà de 9 fabrics en orbite, la scène passe en mode `.dense` : les capsules perdent
+    leur ligne de contexte et leurs libellés d'axe (les pastilles route/sécurité restent),
+    la typo descend d'un cran. 20 capsules denses tiennent dans la scène à 1280px.
+  - Les fabrics « hors orbite » (anomalies) sont empilés dans une gouttière au bas de la
+    scène, pas dispersés : ils restent lisibles même s'il y en a 5.
+  - Les arcs sont O(annonceurs × classificateurs). Au-delà de 40 arcs, `MAX_ARCS` bascule
+    l'affichage sur « arcs du fabric survolé / ouvert uniquement » (le reste est estompé à
+    l'ouverture de toute façon) — voir la constante ARC_DIM_THRESHOLD.
+
+  CONTRAINTES : fichier autonome, aucun réseau, SVG + CSS + JS vanilla, Chromium/WebView2.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fabric Lens — Constellation orbitale · 10.21.10.0/24</title>
+<!-- design/nocturne.css INLINÉ (source de vérité : ../design/nocturne.css).
+     Inliné pour tenir la contrainte « fichier autonome, aucun réseau ». -->
+<style>
+/* Nocturne — design-system tokens and component classes.
+   Source: Claude Design project "Cisco ACI Policy Analyzer"
+   (_ds/nocturne-6dbba83f-ae08-459a-8073-fe7f5074721f/styles.css)
+   This file is the source of truth for the look. */
+/* @import Google Fonts RETIRÉ : le fichier doit fonctionner hors ligne (aucune requête réseau).
+   Inter est utilisée si elle est installée localement, sinon system-ui via la font-stack. */
+
+:root {
+  --color-bg: #161826;
+  --color-surface: #232532;
+  --color-text: #e9e9ed;
+  --color-accent: #9184d9;
+  --color-accent-2: #a7a1db;
+  --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale. */
+  --color-neutral-100: #f3f5fe;
+  --color-neutral-200: #e4e7f5;
+  --color-neutral-300: #cfd3e5;
+  --color-neutral-400: #b2b6ca;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #75798c;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --color-accent-100: #f5f4ff;
+  --color-accent-200: #e7e5fe;
+  --color-accent-300: #d2cefd;
+  --color-accent-400: #b5abfc;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #796cbf;
+  --color-accent-700: #5d5294;
+  --color-accent-800: #423a6a;
+  --color-accent-900: #2b2741;
+
+  --color-accent-2-100: #f5f4ff;
+  --color-accent-2-200: #e7e5fe;
+  --color-accent-2-300: #d2cefd;
+  --color-accent-2-400: #b5afe8;
+  --color-accent-2-500: #9690c9;
+  --color-accent-2-600: #7972a9;
+  --color-accent-2-700: #5c5783;
+  --color-accent-2-800: #423e5d;
+  --color-accent-2-900: #2b293a;
+
+  --color-section: #262a60;
+  --color-section-glow: #353b80;
+  --color-section-ghost: #4c5397;
+
+  --font-heading: "Inter", system-ui, sans-serif;
+  --font-heading-weight: 500;
+  --font-body: "Inter", system-ui, sans-serif;
+
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 0 0 1px #3f424d;
+  --shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0,0,0,0.55);
+  --shadow-lg: 0 0 0 1px #9397ab, 0 16px 40px rgba(0,0,0,0.65);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+.lighten { mix-blend-mode: lighten; background-color: transparent; }
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 400; }
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
+}
+h1 { font-size: 42px; }
+h2 { font-size: 32px; }
+h3 { font-size: 25px; }
+h4 { font-size: 20px; }
+h5 { font-size: 16px; }
+h6 { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-accent); text-underline-offset: 3px; }
+img { display: block; max-width: 100%; }
+figure { margin: 0; }
+figcaption {
+  font-size: 11px; margin-top: var(--space-1);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, Menlo, monospace; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+/* ── Rules ────────────────────────────────────────────────────────────── */
+.hr {
+  height: 1px; border: 0; margin: var(--space-4) 0;
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 14px; line-height: 1.2; color: var(--color-text);
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn svg { display: block; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.btn-primary:active { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.btn-icon { width: 36px; height: 36px; padding: 0; }
+.btn-block { width: 100%; margin-top: var(--space-2); }
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.input {
+  width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  font-size: 14px; color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+textarea.input { min-height: 90px; resize: vertical; }
+.radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.radio input, .seg-opt input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.radio .dot {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--color-divider);
+}
+.radio:hover .dot { border-color: var(--color-accent); }
+.radio input:checked + .dot {
+  border-color: var(--color-accent); background: var(--color-accent);
+  box-shadow: inset 0 0 0 4px var(--color-bg);
+}
+.radio input:focus-visible + .dot { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.seg-opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+}
+.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+.seg-opt:has(input:checked) { color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
+.seg-opt:not(:has(input:checked)):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.seg-opt:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* ── Cards ────────────────────────────────────────────────────────────── */
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface);
+}
+.card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+.card-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 17px; line-height: 1.2;
+}
+.card-body { margin: 0; font-size: 13px; opacity: 0.8; flex: 1; }
+.card-meta {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.elev-sm { box-shadow: var(--shadow-sm); }
+.elev-md { box-shadow: var(--shadow-md); }
+.elev-lg { box-shadow: var(--shadow-lg); }
+
+/* ── Tags ─────────────────────────────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; font-size: 11px;
+  letter-spacing: 0.02em; padding: 3px 10px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.tag-accent { background: var(--color-accent-800); color: var(--color-accent-100); }
+.tag-accent-2 { background: var(--color-accent-2-800); color: var(--color-accent-2-100); }
+.tag-neutral { background: var(--color-neutral-800); color: var(--color-neutral-100); }
+.tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
+
+/* ── Navigation ───────────────────────────────────────────────────────── */
+.nav {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: none;
+}
+.nav-brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 18px; margin-right: auto;
+}
+.nav a { color: inherit; text-decoration: none; font-size: 14px; }
+.nav a:hover, .nav a[aria-current='page'] { color: var(--color-accent); }
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th {
+  text-align: left; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  padding: var(--space-2); border-bottom: 1px solid transparent;
+}
+.table td { padding: var(--space-2); border-bottom: 1px solid transparent; }
+.table thead tr {
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr {
+  background: linear-gradient(to right,
+    transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+    color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr:hover {
+  background:
+    linear-gradient(color-mix(in srgb, var(--color-text) 4%, transparent),
+                    color-mix(in srgb, var(--color-text) 4%, transparent)) no-repeat 0 0 / 100% 100%,
+    linear-gradient(to right,
+      transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+      color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+
+/* ── Dialog ───────────────────────────────────────────────────────────── */
+.dialog-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+}
+.dialog {
+  width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--color-surface); box-shadow: var(--shadow-lg);
+}
+.dialog-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 20px;
+}
+.dialog-body { font-size: 14px; opacity: 0.85; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+</style>
+
+<style>
+/* ─────────────────────────────────────────────────────────────────────────────
+   Couleurs sémantiques dérivées UNIQUEMENT des tokens Nocturne.
+   Axe ROUTAGE  = accent saturé (violet)   ·  Axe SÉCURITÉ = accent délavé (givre)
+   Deux luminances opposées dans la même famille : lisibles sans légende.
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  --fl-route:      var(--color-accent-400);
+  --fl-route-dim:  color-mix(in srgb, var(--color-accent-400) 40%, transparent);
+  --fl-sec:        color-mix(in srgb, var(--color-neutral-200) 76%, var(--color-accent-400));
+  --fl-sec-dim:    color-mix(in srgb, var(--color-neutral-200) 30%, transparent);
+  --fl-approx:     var(--color-neutral-400);
+  --fl-warn:       color-mix(in srgb, var(--color-neutral-100) 55%, var(--color-accent-600));
+  --fl-glow:       color-mix(in srgb, var(--color-accent) 55%, transparent);
+  --fl-ink-soft:   color-mix(in srgb, var(--color-text) 60%, transparent);
+  /* 62 % et non 40 % : ce token porte du texte de 9 à 11 px (rôles, sous-titres,
+     DN du pied d'inspecteur). À 40 % le contraste tombait à ~3,1:1 sur --color-bg,
+     sous le seuil AA. À 62 % il est à ~5,8:1. */
+  --fl-ink-faint:  color-mix(in srgb, var(--color-text) 62%, transparent);
+  --fl-line:       var(--color-divider);
+  --fl-card-bg:    color-mix(in srgb, var(--color-surface) 88%, var(--color-bg));
+}
+
+html, body { height: 100%; }
+body { overflow-x: auto; overflow-y: hidden; }
+
+/* ── Chrome ──────────────────────────────────────────────────────────────── */
+.app { display: flex; flex-direction: column; height: 100vh; min-width: 1280px; }
+
+.topbar {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-6);
+  border-bottom: 1px solid var(--fl-line); flex: none;
+}
+.brand-dot {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border-radius: var(--radius-sm); font-size: 11px; letter-spacing: .04em;
+  background: var(--color-accent-900); color: var(--color-accent-300);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.brand-txt { font-family: var(--font-heading); font-weight: 500; font-size: 15px; }
+.brand-txt span { color: var(--fl-ink-faint); }
+.qbox {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-4); border-radius: var(--radius-md);
+  border: 1px solid var(--fl-line); background: var(--color-surface); min-width: 300px;
+}
+.qbox .q-ico { color: var(--color-accent); font-size: 14px; }
+.qbox .q-val { font-size: 14px; }
+.qbox .q-hint { font-size: 11px; color: var(--fl-ink-faint); margin-left: auto; }
+.topbar .spacer { margin-left: auto; }
+
+/* ── Grille principale ───────────────────────────────────────────────────── */
+.main { flex: 1; min-height: 620px; display: grid; grid-template-columns: minmax(0,1fr) 348px; }
+
+/* ── Scène ───────────────────────────────────────────────────────────────── */
+.scene { position: relative; overflow: hidden; min-height: 0; }
+.arcs { position: absolute; inset: 0; width: 100%; height: 100%; }
+.arcs path, .arcs ellipse, .arcs line { vector-effect: non-scaling-stroke; fill: none; }
+
+.orbit-guide { stroke: var(--fl-line); stroke-width: 1; stroke-dasharray: 2 7; opacity: .55; }
+.axis-line   { stroke: var(--fl-line); stroke-width: 1; stroke-dasharray: 1 6; opacity: .8; }
+
+/* Arc = deux traits superposés (lueur large + trait net) : pas de filtre, pas de
+   déformation dans l'espace non uniforme du viewBox. */
+.arc-halo { stroke-width: 7; opacity: .10; }
+.arc-core { stroke-width: 1.4; opacity: .85; }
+.arc[data-kind="exact"]  .arc-halo,
+.arc[data-kind="exact"]  .arc-core { stroke: var(--color-accent); }
+.arc[data-kind="approx"] .arc-halo,
+.arc[data-kind="approx"] .arc-core { stroke: var(--fl-approx); }
+.arc[data-kind="approx"] .arc-core { stroke-dasharray: 5 5; opacity: .6; }
+.arc[data-kind="broken"] .arc-core {
+  stroke: var(--fl-warn); stroke-dasharray: 2 9; opacity: .5; stroke-width: 1.2;
+}
+.arc[data-kind="broken"] .arc-halo { display: none; }
+.arc { transition: opacity .28s ease; }
+
+/* Axe : libellés de bord — la scène porte le sens, pas une légende flottante. */
+.axis-edge {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  writing-mode: vertical-rl; font-size: 10px; letter-spacing: .22em;
+  text-transform: uppercase; color: var(--fl-ink-faint); user-select: none;
+}
+.axis-edge.left  { left: 10px; transform: translateY(-50%) rotate(180deg); color: color-mix(in srgb, var(--fl-route) 88%, transparent); }
+.axis-edge.right { right: 10px; color: color-mix(in srgb, var(--fl-sec) 88%, transparent); }
+
+/* ── Noyau : le préfixe ──────────────────────────────────────────────────── */
+.core {
+  position: absolute; left: 50%; top: 46%; transform: translate(-50%,-50%);
+  width: 178px; height: 178px; border-radius: 50%; display: grid;
+  place-content: center; text-align: center; gap: 2px; cursor: pointer;
+  background:
+    radial-gradient(circle at 50% 42%,
+      color-mix(in srgb, var(--color-accent) 16%, transparent) 0%,
+      color-mix(in srgb, var(--color-surface) 92%, var(--color-bg)) 62%,
+      var(--color-bg) 100%);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent),
+              0 0 42px 4px var(--fl-glow), inset 0 0 34px color-mix(in srgb, var(--color-accent) 14%, transparent);
+  color: inherit; font: inherit;
+}
+.core:hover { border-color: var(--color-accent); }
+.core-k { font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--color-accent-300); }
+.core-v { font-size: 17px; letter-spacing: -.01em; }
+.core-m { font-size: 10.5px; color: var(--fl-ink-soft); }
+
+/* ── Capsule fabric ──────────────────────────────────────────────────────── */
+.fab {
+  position: absolute; width: 232px; z-index: 2;
+  transform: translate(calc(-50% + var(--dx,0px)), calc(-50% + var(--dy,0px)));
+  border-radius: var(--radius-lg); background: var(--fl-card-bg);
+  box-shadow: var(--shadow-sm), 0 4px 16px color-mix(in srgb, var(--color-neutral-900) 62%, transparent);
+  transition: box-shadow .3s ease, opacity .3s ease, width .38s cubic-bezier(.22,.7,.3,1),
+              transform .38s cubic-bezier(.22,.7,.3,1), border-color .25s ease;
+  border: 1px solid transparent;
+}
+.dense .fab { width: 186px; }
+.fab::after {                                   /* liseré d'axe : gauche=routage, droite=sécurité */
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(90deg,
+      var(--edge-l, transparent) 0 2px, transparent 2px calc(100% - 2px), var(--edge-r, transparent) calc(100% - 2px));
+  opacity: .95;
+}
+.fab.route::after { --edge-l: var(--fl-route); }
+.fab.sec::after   { --edge-r: var(--fl-sec); }
+
+.fab-btn {
+  display: block; width: 100%; text-align: left; cursor: pointer; color: inherit;
+  background: none; border: 0; font: inherit; padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+}
+.fab-line1 { display: flex; align-items: center; gap: var(--space-2); }
+.fab-id { font-size: 12.5px; letter-spacing: -.01em; }
+.dense .fab-id { font-size: 11.5px; }
+.fab-role {
+  margin-left: auto; font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--fl-ink-faint);
+}
+.fab-sub { font-size: 11px; color: var(--fl-ink-soft); margin-top: 2px; }
+/* Mode dense (> 9 fabrics en orbite) : on ne garde que l'identité et les pastilles d'axe. */
+.dense .fab-sub, .dense .fab-role, .dense .ax-approx .t { display: none; }
+.dense .fab.is-open .fab-sub, .dense .fab.is-open .fab-role,
+.dense .fab.is-open .ax-approx .t { display: inline; }
+.dense .fab.is-open .fab-sub { display: block; }
+
+/* Pastilles d'axe — même côté que l'axe global : la position répète le sens. */
+.fab-ax { display: flex; gap: var(--space-2); margin-top: var(--space-3); align-items: center; }
+.ax {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px;
+  letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px 2px 5px;
+  border-radius: var(--radius-sm); border: 1px solid var(--fl-line); color: var(--fl-ink-faint);
+}
+.ax svg { width: 15px; height: 13px; flex: none; }
+.ax .g { stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.ax.on.route { color: var(--fl-route); border-color: color-mix(in srgb, var(--fl-route) 55%, transparent);
+                box-shadow: 0 0 12px -3px var(--fl-route); }
+.ax.on.sec   { color: var(--fl-sec);   border-color: color-mix(in srgb, var(--fl-sec) 45%, transparent);
+                box-shadow: 0 0 12px -3px var(--fl-sec); }
+.ax.off { opacity: .5; }   /* .3 rendait l'état « non » illisible : le glyphe porte du sens, pas de la décoration */
+.ax .lbl {}
+.dense .ax .lbl { display: none; }
+.ax-approx {
+  display: flex; align-items: center; gap: 5px; margin-top: var(--space-2);
+  font-size: 10px; color: var(--fl-approx);
+}
+.ax-approx .t { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
+
+/* Corps déplié (zoom sémantique) */
+.fab-body {
+  max-height: 0; overflow: hidden; opacity: 0;
+  /* `visibility: hidden` sort les dizaines de <button> repliés de l'ordre de tabulation :
+     sans lui, Tab traversait tout le contenu invisible des 6 capsules. Le délai de .4 s à
+     la fermeture laisse l'animation de repli se jouer avant l'escamotage. */
+  visibility: hidden;
+  transition: max-height .4s cubic-bezier(.22,.7,.3,1), opacity .22s ease, visibility 0s linear .4s;
+}
+.fab.is-open { width: 352px; z-index: 40; border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  box-shadow: var(--shadow-md), 0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent),
+              0 0 46px -8px var(--fl-glow); }
+.dense .fab.is-open { width: 352px; }
+.fab.is-open .fab-body { max-height: 430px; opacity: 1; overflow-y: auto; visibility: visible; transition-delay: .06s; }
+.fab.is-open .fab-sub { display: block; }
+.fab.is-open .ax .lbl { display: inline; }
+.fab-body-in { padding: 0 var(--space-4) var(--space-4); }
+
+/* Au-delà de ARC_DIM_THRESHOLD arcs (grands parcs), la nappe d'arcs devient un fond :
+   seuls les chemins du fabric survolé/ouvert restent lisibles. */
+.scene.arc-quiet .arc:not(.hl) { opacity: .07; }
+/* `animation: none` en plus de `transition: none` : si l'utilisateur ouvre une capsule
+   pendant l'intro (< 2,2 s), l'animation `pop` est encore en cours et
+   getBoundingClientRect() renverrait la géométrie à mi-course — donc un recadrage faux. */
+.fab.measuring, .fab.measuring * { transition: none !important; animation: none !important; }
+.scene.has-open .fab:not(.is-open) { opacity: .26; }
+.scene.has-open .arc:not(.hl) { opacity: .10; }
+.scene[data-hl] .fab:not(.hl):not(.is-open) { opacity: .42; }
+.scene[data-hl] .arc:not(.hl) { opacity: .12; }
+.scene[data-hl] .arc.hl .arc-core { opacity: 1; }
+.scene[data-hl] .arc.hl .arc-halo { opacity: .24; }
+.scene.has-open .arc.hl .arc-halo { opacity: .24; }
+
+/* ── Blocs internes de la capsule ────────────────────────────────────────── */
+.sec-h {
+  font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-300);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.row {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: none; border: 1px solid var(--fl-line); border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
+}
+.row:hover { border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+             background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
+.row-t { font-size: 11.5px; }
+.row-s { font-size: 10px; color: var(--fl-ink-faint); margin-top: 1px; }
+.nest { margin-left: var(--space-3); padding-left: var(--space-3); border-left: 1px solid var(--fl-line); }
+
+/* Puces de scope : glyphe directionnel + couleur + nom ACI. Auto-explicatif. */
+.scopes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: var(--space-2); }
+.sc {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px;
+  padding: 1.5px 6px 1.5px 4px; border-radius: var(--radius-sm);
+  border: 1px solid currentColor; background: color-mix(in srgb, currentColor 9%, transparent);
+  white-space: nowrap;
+}
+.sc svg { width: 15px; height: 13px; }
+.sc .g { stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.sc.route { color: var(--fl-route); }
+.sc.sec   { color: var(--fl-sec); }
+.sc.shared { border-style: dashed; }
+
+.pfx { display: flex; align-items: baseline; gap: var(--space-2); }
+.pfx-ip { font-size: 11.5px; }
+.badge-approx {
+  font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--fl-approx);
+  border: 1px dashed color-mix(in srgb, var(--fl-approx) 70%, transparent);
+  border-radius: var(--radius-sm); padding: 0 5px;
+}
+.badge-exact { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--fl-ink-faint); }
+
+.ctr { display: flex; gap: 5px; flex-wrap: wrap; margin-top: var(--space-2); }
+.ctr .row { margin: 0; padding: 2px 8px; font-size: 10px; }
+.ctr .kind { font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; }
+.ctr .prov .kind { color: var(--color-accent-300); }
+.ctr .cons .kind { color: var(--color-neutral-400); }
+
+/* ── Anomalie / hors-orbite ──────────────────────────────────────────────── */
+.fab.anomaly {
+  border-color: color-mix(in srgb, var(--fl-warn) 45%, transparent);
+  background:
+    repeating-linear-gradient(135deg, transparent 0 7px,
+      color-mix(in srgb, var(--fl-warn) 5%, transparent) 7px 8px),
+    var(--fl-card-bg);
+  box-shadow: none; border-style: dashed;
+}
+.fab.anomaly.is-open { border-style: solid; }
+.warn {
+  display: flex; gap: var(--space-2); font-size: 10.5px; line-height: 1.4;
+  color: var(--fl-warn); border: 1px solid color-mix(in srgb, var(--fl-warn) 35%, transparent);
+  border-left-width: 2px; border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3); margin-top: var(--space-3);
+}
+.tag-warn {
+  margin-left: auto; font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--fl-warn); border: 1px solid currentColor; border-radius: var(--radius-sm); padding: 0 5px;
+}
+.gutter-label {
+  position: absolute; left: 16px; font-size: 9px; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--fl-ink-faint);
+}
+
+/* ── Inspecteur ──────────────────────────────────────────────────────────── */
+.inspector {
+  border-left: 1px solid var(--fl-line); background: var(--color-surface);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.insp-head {
+  padding: var(--space-4) var(--space-6) var(--space-3);
+  display: flex; align-items: center; gap: var(--space-2); flex: none;
+}
+.insp-kicker { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--color-accent-300); }
+.insp-title { font-size: 14px; margin-top: 2px; word-break: break-all; }
+.insp-body { flex: 1; overflow-y: auto; padding: 0 var(--space-6) var(--space-6); }
+.insp-foot {
+  flex: none; padding: var(--space-3) var(--space-6); border-top: 1px solid var(--fl-line);
+  font-size: 10px; color: var(--fl-ink-faint); word-break: break-all; line-height: 1.5;
+}
+.kv { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 2px var(--space-3); font-size: 11.5px; }
+.kv dt { color: var(--fl-ink-faint); font-size: 10.5px; }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv dd.mono { word-break: break-all; }
+.insp-sec { margin-top: var(--space-6); }
+.insp-sec > h6 { color: var(--color-accent-300); margin-bottom: var(--space-2); font-size: 9px; letter-spacing: .14em; }
+.pathrow {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%; text-align: left;
+  font: inherit; color: inherit; background: none; cursor: pointer;
+  border: 1px solid var(--fl-line); border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2); font-size: 10.5px;
+}
+.pathrow:hover { border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); }
+.pathrow .arrow { color: var(--color-accent); }
+.pathrow.approx .arrow { color: var(--fl-approx); }
+.legend-item { display: flex; gap: var(--space-3); align-items: flex-start; margin-bottom: var(--space-3); }
+.legend-item .txt { font-size: 10.5px; color: var(--fl-ink-soft); line-height: 1.45; }
+.legend-item .txt b { color: var(--color-text); font-weight: 500; }
+
+/* ── Intro (≤ 2 s, puis plus rien ne bouge) ──────────────────────────────── */
+@keyframes pop { from { opacity: 0; transform: translate(calc(-50% + var(--dx,0px)), calc(-50% + var(--dy,0px) + 14px)) scale(.9); }
+                 to   { opacity: 1; } }
+@keyframes coreIn { from { opacity: 0; transform: translate(-50%,-50%) scale(.55); }
+                    to   { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
+@keyframes draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+@keyframes fadeIn { from { opacity: 0; } }
+@keyframes ringOnce { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fl-warn) 45%, transparent); }
+                      100% { box-shadow: 0 0 0 16px transparent; } }
+
+.intro .fab  { animation: pop .5s cubic-bezier(.34,1.56,.64,1) both; animation-delay: calc(.28s + var(--i) * .075s); }
+.intro .core { animation: coreIn .55s cubic-bezier(.34,1.56,.64,1) both; }
+.intro .arc path { stroke-dasharray: var(--len) !important; animation: draw .6s ease-out both; animation-delay: calc(.72s + var(--ai) * .05s); }
+.intro .axis-edge, .intro .gutter-label, .intro .orbit-guide, .intro .axis-line { animation: fadeIn .5s ease both; animation-delay: 1.25s; }
+.intro .fab.anomaly { animation: pop .5s cubic-bezier(.34,1.56,.64,1) both, ringOnce .7s ease-out 1 both;
+                      animation-delay: 1.05s, 1.25s; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001s !important; animation-delay: 0s !important; transition-duration: .001s !important; }
+}
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <span class="brand-dot mono">FL</span>
+    <span class="brand-txt">Fabric Lens <span>· ACI Policy Analyzer</span></span>
+    <div class="qbox">
+      <span class="q-ico" aria-hidden="true">&#9906;</span>
+      <span class="q-val mono" id="q-val">—</span>
+      <span class="q-hint">VLAN · subnet · IP</span>
+    </div>
+    <span class="tag tag-outline mono" id="q-count">—</span>
+    <span class="spacer"></span>
+    <button class="btn btn-secondary" id="btn-reset" type="button">Retour au global <span class="text-muted mono">Échap</span></button>
+    <button class="btn btn-ghost" id="btn-replay" type="button">&#8635; Rejouer l'intro</button>
+  </header>
+
+  <div class="main">
+    <section class="scene" id="scene" aria-label="Constellation orbitale des fabrics">
+      <svg class="arcs" id="arcs" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="false" role="group"
+           aria-label="Chemins inter-fabric du préfixe recherché"></svg>
+      <span class="axis-edge left">Routage · annoncé</span>
+      <span class="axis-edge right">Sécurité · classifié</span>
+      <!-- aria-label posé en JS : en dur il masquait la valeur du préfixe et le décompte
+           (un aria-label remplace le contenu du bouton pour un lecteur d'écran). -->
+      <button class="core" id="core" type="button">
+        <span class="core-k">Préfixe</span>
+        <span class="core-v mono" id="core-v">—</span>
+        <span class="core-m" id="core-m">—</span>
+      </button>
+    </section>
+
+    <aside class="inspector" aria-label="Panneau de détail">
+      <div class="insp-head">
+        <div style="min-width:0">
+          <div class="insp-kicker" id="insp-kicker">Vue d'ensemble</div>
+          <div class="insp-title mono" id="insp-title">—</div>
+        </div>
+      </div>
+      <div class="insp-body" id="insp-body"></div>
+      <div class="insp-foot mono" id="insp-foot"></div>
+    </aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DONNÉES — recopie fidèle de prototypes/fixture.json
+   ═══════════════════════════════════════════════════════════════════════════ */
+const DATA = {
+  "query": { "type": "subnet", "value": "10.21.10.0/24" },
+  "scopeLegend": {
+    "import-security": "External Subnets for the External EPG — classifie le trafic entrant dans l'ext-EPG",
+    "export-rtctrl": "Advertised Externally — le préfixe est annoncé vers l'extérieur",
+    "import-rtctrl": "Import Route Control",
+    "shared-security": "Shared Security Import (inter-VRF)",
+    "shared-rtctrl": "Shared Route Control (inter-VRF)"
+  },
+  "fabrics": [
+    {
+      "id": "DC-PARIS-01", "site": "Paris", "role": "origin", "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:00:14Z",
+      "bd": {
+        "dn": "uni/tn-Production/BD-BD-WEB-2110", "tenant": "Production", "name": "BD-WEB-2110",
+        "vrf": "Prod_VRF", "unicastRoute": "yes", "arpFlood": "no", "unkMacUcastAct": "proxy",
+        "subnet": { "ip": "10.21.10.1/24", "scope": "public,shared", "preferred": "no" }
+      },
+      "epgs": [{
+        "dn": "uni/tn-Production/ap-WebApp_AP/epg-WebServers_EPG", "name": "WebServers_EPG",
+        "ap": "WebApp_AP", "encap": "vlan-2110", "deployment": "static-port",
+        "paths": [{ "tDn": "topology/pod-1/protpaths-101-102/pathep-[SRV-VPC.IPG]", "mode": "regular", "kind": "vpc" }],
+        "domain": "uni/phys-Prod_PhysDomain",
+        "provides": ["Web_Internet_Contract"], "consumes": ["Web_to_App_Contract"]
+      }],
+      "l3outs": [{
+        "dn": "uni/tn-Production/out-L3OUT-INTERNET", "name": "L3OUT-INTERNET", "vrf": "Prod_VRF",
+        "domain": "uni/l3dom-Test_L3DOM_Standard", "enforceRtctrl": "export", "nodes": ["101", "102"],
+        "extEpgs": [{
+          "dn": "uni/tn-Production/out-L3OUT-INTERNET/instP-EXT-INTERNET", "name": "EXT-INTERNET",
+          "prefGrMemb": "exclude",
+          "subnets": [
+            { "ip": "10.21.10.0/24", "scope": ["export-rtctrl"], "aggregate": "" },
+            { "ip": "0.0.0.0/0", "scope": ["import-security"], "aggregate": "" }
+          ],
+          "provides": [], "consumes": ["Web_Internet_Contract"]
+        }]
+      }]
+    },
+    {
+      "id": "DC-LYON-02", "site": "Lyon", "role": "dr", "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:04:02Z",
+      "bd": {
+        "dn": "uni/tn-Production/BD-BD-WEB-DR", "tenant": "Production", "name": "BD-WEB-DR",
+        "vrf": "Prod_VRF", "unicastRoute": "yes", "arpFlood": "yes", "unkMacUcastAct": "flood",
+        "subnet": { "ip": "10.21.10.1/24", "scope": "private", "preferred": "no" }
+      },
+      "epgs": [{
+        "dn": "uni/tn-Production/ap-WebApp_AP/epg-WebServers_DR_EPG", "name": "WebServers_DR_EPG",
+        "ap": "WebApp_AP", "encap": "vlan-2310", "deployment": "aaep", "paths": [],
+        "aaep": "uni/infra/attentp-SRV.AAEP", "domain": "uni/phys-Prod_PhysDomain",
+        "provides": [], "consumes": []
+      }],
+      "l3outs": [{
+        "dn": "uni/tn-Production/out-L3OUT-DCI", "name": "L3OUT-DCI", "vrf": "Prod_VRF",
+        "domain": "uni/l3dom-Test_L3DOM_Standard", "enforceRtctrl": "export", "nodes": ["201", "202"],
+        "extEpgs": [{
+          "dn": "uni/tn-Production/out-L3OUT-DCI/instP-EXT-DCI", "name": "EXT-DCI",
+          "prefGrMemb": "exclude",
+          "subnets": [{ "ip": "10.21.10.0/24", "scope": ["import-security"], "aggregate": "" }],
+          "provides": ["DR_Sync_Contract"], "consumes": []
+        }]
+      }]
+    },
+    {
+      "id": "DC-FRA-03", "site": "Francfort", "role": "transit", "apicVersion": "6.0(6c)",
+      "backupTs": "2026-07-20T01:07:41Z", "bd": null, "epgs": [],
+      "l3outs": [
+        {
+          "dn": "uni/tn-Transit/out-L3OUT-WAN", "name": "L3OUT-WAN", "vrf": "Transit_VRF",
+          "domain": "uni/l3dom-WAN_L3DOM", "enforceRtctrl": "export", "nodes": ["301", "302"],
+          "extEpgs": [{
+            "dn": "uni/tn-Transit/out-L3OUT-WAN/instP-EXT-WAN", "name": "EXT-WAN",
+            "prefGrMemb": "exclude",
+            "subnets": [
+              { "ip": "10.21.10.0/24", "scope": ["import-security", "export-rtctrl"], "aggregate": "" },
+              { "ip": "10.21.0.0/16", "scope": ["import-rtctrl"], "aggregate": "" }
+            ],
+            "provides": ["Transit_Contract"], "consumes": []
+          }]
+        },
+        {
+          "dn": "uni/tn-Transit/out-L3OUT-PARTNER", "name": "L3OUT-PARTNER", "vrf": "Transit_VRF",
+          "domain": "uni/l3dom-WAN_L3DOM", "enforceRtctrl": "export", "nodes": ["303"],
+          "extEpgs": [{
+            "dn": "uni/tn-Transit/out-L3OUT-PARTNER/instP-EXT-PARTNER", "name": "EXT-PARTNER",
+            "prefGrMemb": "exclude",
+            "subnets": [{ "ip": "10.21.10.0/24", "scope": ["shared-security", "shared-rtctrl"], "aggregate": "" }],
+            "provides": [], "consumes": ["Transit_Contract"]
+          }]
+        }
+      ]
+    },
+    {
+      "id": "DC-MTL-04", "site": "Montréal", "role": "consumer", "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:11:09Z", "bd": null, "epgs": [],
+      "l3outs": [{
+        "dn": "uni/tn-Production/out-L3OUT-CORE", "name": "L3OUT-CORE", "vrf": "Prod_VRF",
+        "domain": "uni/l3dom-Core_L3DOM", "enforceRtctrl": "export", "nodes": ["401", "402"],
+        "extEpgs": [{
+          "dn": "uni/tn-Production/out-L3OUT-CORE/instP-EXT-CORE", "name": "EXT-CORE",
+          "prefGrMemb": "exclude",
+          "subnets": [{ "ip": "10.21.10.0/24", "scope": ["import-security"], "aggregate": "" }],
+          "provides": [], "consumes": ["Web_Internet_Contract"]
+        }]
+      }]
+    },
+    {
+      "id": "DC-TOR-05", "site": "Toronto", "role": "consumer", "apicVersion": "6.0(7e)",
+      "backupTs": "2026-07-20T01:14:52Z", "bd": null, "epgs": [],
+      "l3outs": [{
+        "dn": "uni/tn-Production/out-L3OUT-CORE", "name": "L3OUT-CORE", "vrf": "Prod_VRF",
+        "domain": "uni/l3dom-Core_L3DOM", "enforceRtctrl": "export", "nodes": ["501", "502"],
+        "extEpgs": [{
+          "dn": "uni/tn-Production/out-L3OUT-CORE/instP-EXT-CORE", "name": "EXT-CORE",
+          "prefGrMemb": "exclude",
+          "subnets": [{ "ip": "10.21.0.0/16", "scope": ["import-security"], "aggregate": "" }],
+          "provides": [], "consumes": ["Web_Internet_Contract"],
+          "_note": "match par agrégat /16, pas exact — à signaler différemment"
+        }]
+      }]
+    },
+    {
+      "id": "DC-BRU-06", "site": "Bruxelles", "role": "conflict", "apicVersion": "5.2(8h)",
+      "backupTs": "2026-07-20T01:18:30Z",
+      "bd": {
+        "dn": "uni/tn-Legacy/BD-BD-LEGACY-WEB", "tenant": "Legacy", "name": "BD-LEGACY-WEB",
+        "vrf": "Legacy_VRF", "unicastRoute": "yes", "arpFlood": "no", "unkMacUcastAct": "proxy",
+        "subnet": { "ip": "10.21.10.254/24", "scope": "public", "preferred": "no" }
+      },
+      "epgs": [{
+        "dn": "uni/tn-Legacy/ap-Legacy_AP/epg-LEGACY_WEB_EPG", "name": "LEGACY_WEB_EPG",
+        "ap": "Legacy_AP", "encap": "vlan-2110", "deployment": "static-port",
+        "paths": [{ "tDn": "topology/pod-1/paths-601/pathep-[eth1/22]", "mode": "untagged", "kind": "access" }],
+        "domain": "uni/phys-PHY.DOM", "provides": [], "consumes": []
+      }],
+      "l3outs": []
+    }
+  ],
+  "contracts": {
+    "Web_Internet_Contract": {
+      "dn": "uni/tn-Production/brc-Web_Internet_Contract", "scope": "context",
+      "subjects": [{ "name": "web", "filters": [
+        { "name": "http", "etherT": "ip", "prot": "tcp", "dFromPort": "80", "dToPort": "80" },
+        { "name": "https", "etherT": "ip", "prot": "tcp", "dFromPort": "443", "dToPort": "443" }
+      ]}]
+    },
+    "Web_to_App_Contract": {
+      "dn": "uni/tn-Production/brc-Web_to_App_Contract", "scope": "context",
+      "subjects": [{ "name": "app", "filters": [
+        { "name": "app-tls", "etherT": "ip", "prot": "tcp", "dFromPort": "8443", "dToPort": "8443" }
+      ]}]
+    },
+    "DR_Sync_Contract": {
+      "dn": "uni/tn-Production/brc-DR_Sync_Contract", "scope": "context",
+      "subjects": [{ "name": "sync", "filters": [
+        { "name": "https", "etherT": "ip", "prot": "tcp", "dFromPort": "443", "dToPort": "443" }
+      ]}]
+    },
+    "Transit_Contract": {
+      "dn": "uni/tn-Transit/brc-Transit_Contract", "scope": "global",
+      "subjects": [{ "name": "any", "filters": [
+        { "name": "default", "etherT": "unspecified", "prot": "unspecified", "dFromPort": "unspecified", "dToPort": "unspecified" }
+      ]}]
+    }
+  },
+  "accessChain": {
+    "vlan": 2110,
+    "encapBlk": { "dn": "uni/infra/vlanns-[Prod_VLAN_Pool]-static/from-[vlan-2000]-to-[vlan-2199]", "from": "vlan-2000", "to": "vlan-2199", "allocMode": "static", "role": "external" },
+    "vlanPool": { "dn": "uni/infra/vlanns-[Prod_VLAN_Pool]-static", "name": "Prod_VLAN_Pool", "allocMode": "static" },
+    "domains": [
+      { "dn": "uni/phys-Prod_PhysDomain", "name": "Prod_PhysDomain", "cls": "physDomP" },
+      { "dn": "uni/l3dom-Test_L3DOM_Standard", "name": "Test_L3DOM_Standard", "cls": "l3extDomP" }
+    ],
+    "aaeps": [{ "dn": "uni/infra/attentp-SRV.AAEP", "name": "SRV.AAEP",
+      "funcToEpg": [{ "tDn": "uni/tn-Production/ap-WebApp_AP/epg-WebServers_EPG", "encap": "vlan-2110", "mode": "regular" }] }],
+    "ipgs": [
+      { "dn": "uni/infra/funcprof/accbundle-SRV-VPC.IPG", "name": "SRV-VPC.IPG", "cls": "infraAccBndlGrp", "lagT": "node" },
+      { "dn": "uni/infra/funcprof/accportgrp-SRV-WEB.IPG", "name": "SRV-WEB.IPG", "cls": "infraAccPortGrp", "lagT": "" }
+    ],
+    "interfaces": [
+      { "node": "101", "port": "eth1/20", "profile": "system-port-profile-node-101", "selector": "SRV-VPC.IPG", "ipg": "SRV-VPC.IPG" },
+      { "node": "102", "port": "eth1/20", "profile": "system-port-profile-node-102", "selector": "SRV-VPC.IPG", "ipg": "SRV-VPC.IPG" },
+      { "node": "101", "port": "eth1/10", "profile": "system-port-profile-node-101", "selector": "SRV-WEB.IPG", "ipg": "SRV-WEB.IPG" }
+    ],
+    "vpcPair": { "name": "vpc_pg_pod1_101_102", "nodes": ["101", "102"] }
+  }
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1 · Analyse — classification des scopes sur deux axes orthogonaux
+   ═══════════════════════════════════════════════════════════════════════════ */
+const AXIS = {                        // scope ACI → axe + sens + glose FR
+  "import-security": { axis: "sec",   dir: "in",  fr: "classifie l'entrant", shared: false },
+  "shared-security": { axis: "sec",   dir: "in",  fr: "classifie (inter-VRF)", shared: true },
+  "export-rtctrl":   { axis: "route", dir: "out", fr: "annoncé vers l'extérieur", shared: false },
+  "shared-rtctrl":   { axis: "route", dir: "out", fr: "annoncé (inter-VRF)", shared: true },
+  "import-rtctrl":   { axis: "route", dir: "in",  fr: "route importée", shared: false }
+};
+
+const ip2int = s => s.split(".").reduce((a, o) => ((a << 8) >>> 0) + (+o), 0) >>> 0;
+const maskOf = l => (l === 0 ? 0 : (0xFFFFFFFF << (32 - l)) >>> 0) >>> 0;
+function cidr(c) { const p = c.split("/"); return { n: (ip2int(p[0]) & maskOf(+p[1])) >>> 0, len: +p[1] }; }
+function contains(a, b) { return a.len <= b.len && ((b.n & maskOf(a.len)) >>> 0) === a.n; }
+
+const Q = cidr(DATA.query.value);
+
+/* Pour chaque fabric : quels l3extSubnet matchent, exactement ou par agrégat. */
+const model = DATA.fabrics.map(f => {
+  const hits = [];
+  (f.l3outs || []).forEach(l3 => l3.extEpgs.forEach(ee => ee.subnets.forEach(sn => {
+    const c = cidr(sn.ip);
+    /* 0.0.0.0/0 englobe tout : c'est un catch-all, pas une décision prise SUR ce préfixe.
+       Il reste affiché dans l'ext-EPG mais ne pèse ni sur l'axe ni sur les chemins. */
+    if (c.n === Q.n && c.len === Q.len)      hits.push({ l3, ee, sn, match: "exact" });
+    else if (contains(c, Q) && c.len > 0)    hits.push({ l3, ee, sn, match: "aggregate" });
+  })));
+  const scopes = new Set();
+  hits.forEach(h => h.sn.scope.forEach(s => scopes.add(s)));
+  const nRoute = [...scopes].filter(s => AXIS[s] && AXIS[s].axis === "route").length;
+  const nSec   = [...scopes].filter(s => AXIS[s] && AXIS[s].axis === "sec").length;
+
+  const advertises  = [...scopes].some(s => s === "export-rtctrl" || s === "shared-rtctrl");
+  const classifies  = [...scopes].some(s => s === "import-security" || s === "shared-security");
+  const exact       = hits.some(h => h.match === "exact");
+  const onlyApprox  = hits.length > 0 && !exact;
+
+  /* Conflit : le préfixe existe sur un Bridge Domain d'un autre VRF, sans aucun L3Out
+     pour le porter — le fabric ne peut donc participer à aucun chemin inter-fabric. */
+  let bdOverlap = null;
+  if (f.bd) {
+    const b = cidr(f.bd.subnet.ip);
+    if (b.n === Q.n && b.len === Q.len) bdOverlap = f.bd;
+  }
+  return { f, hits, scopes: [...scopes], nRoute, nSec, advertises, classifies, exact, onlyApprox, bdOverlap };
+});
+
+const byId = Object.fromEntries(model.map(m => [m.f.id, m]));
+const refVrf   = (model.find(m => m.advertises && m.f.bd) || {}).f;
+const refVrfName = refVrf ? refVrf.bd.vrf : "Prod_VRF";
+const refEncap = (() => { const o = model.find(m => m.advertises && m.f.epgs.length); return o ? o.f.epgs[0].encap : null; })();
+
+model.forEach(m => {
+  m.conflict = m.hits.length === 0 && !!m.bdOverlap && m.bdOverlap.vrf !== refVrfName;
+  m.inOrbit  = m.hits.length > 0;
+  m.encapDrift = m.f.epgs.length && refEncap && m.f.epgs[0].encap !== refEncap ? m.f.epgs[0].encap : null;
+});
+
+/* Chemins inter-fabric : un annonceur → chaque classificateur. */
+const paths = [];
+model.filter(a => a.advertises).forEach(a =>
+  model.filter(b => b.classifies && b.f.id !== a.f.id).forEach(b =>
+    paths.push({ from: a, to: b, kind: b.exact ? "exact" : "approx" })));
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2 · Layout orbital — la position PORTE le sens
+   angle 180° = routage pur (gauche) · 0/-40° = sécurité pure (droite) · 90° = les deux
+   ═══════════════════════════════════════════════════════════════════════════ */
+const CX = 500, CY = 460, RX = 345, RY = 310;   /* espace normalisé 0..1000 */
+const ARC_DIM_THRESHOLD = 40;
+
+function layout(orbit) {
+  const scored = orbit.map(m => {
+    const t = m.nRoute + m.nSec || 1;
+    return { m, score: (m.nSec - m.nRoute) / t };
+  });
+  scored.sort((a, b) => a.score - b.score || (a.m.exact === b.m.exact ? a.m.f.id.localeCompare(b.m.f.id) : (a.m.exact ? -1 : 1)));
+
+  /* regroupe les ex aequo et les éventaille autour de leur angle de base */
+  const groups = new Map();
+  scored.forEach(s => {
+    const k = s.score.toFixed(2);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  });
+  const dense = orbit.length > 9;
+  let ai = 0;
+  groups.forEach((g, k) => {
+    /* Amplitude 180° et non 220° : score −1 (routage pur) → 180° (gauche),
+       score +1 (sécurité pure) → 0° (droite), score 0 → 90° (sommet). Avec 220°
+       la base « sécurité pure » tombait à −40°, et l'éventail d'un groupe de trois
+       ex aequo poussait le troisième à −88° — c'est-à-dire en bas au centre, dans
+       la bande visuelle de la gouttière « hors orbite ». Un fabric purement
+       sécurité se retrouvait donc là où la scène dit « aucun chemin ». */
+    const base = 180 - ((+k + 1) / 2) * 180;
+    const step = dense ? 26 : 48;
+    g.forEach((s, i) => {
+      const ang = (base + ((g.length - 1) / 2 - i) * step) * Math.PI / 180;
+      /* > 9 fabrics : une orbite sur deux passe sur l'ellipse intérieure */
+      const k2 = (dense && ai % 2 === 1) ? 0.58 : 1;
+      s.m.pos = { x: CX + RX * k2 * Math.cos(ang), y: CY - RY * k2 * Math.sin(ang) };
+      ai++;
+    });
+  });
+  return dense;
+}
+
+const orbit  = model.filter(m => m.inOrbit);
+const offOrb = model.filter(m => !m.inOrbit);
+const DENSE  = layout(orbit);
+offOrb.forEach((m, i) => { m.pos = { x: 172 + i * 200, y: 862 }; });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3 · Rendu
+   ═══════════════════════════════════════════════════════════════════════════ */
+const scene = document.getElementById("scene");
+const svg   = document.getElementById("arcs");
+const SVGNS = "http://www.w3.org/2000/svg";
+if (DENSE) scene.classList.add("dense");
+
+document.getElementById("q-val").textContent  = DATA.query.value;
+document.getElementById("core-v").textContent = DATA.query.value;
+document.getElementById("core-m").textContent = orbit.length + " fabrics · " + paths.length + " chemins";
+document.getElementById("core").setAttribute("aria-label",
+  "Préfixe recherché " + DATA.query.value + " — " + orbit.length + " fabrics en orbite, " +
+  paths.length + " chemins inter-fabric. Activer pour revenir à la vue d'ensemble.");
+document.getElementById("q-count").textContent = "présent dans " + model.length + " fabrics";
+
+function el(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+function svgEl(tag, attrs) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+
+/* Glyphes directionnels : la flèche SORT d'une barre (routage) ou ENTRE dans une barre
+   (sécurité). Lu sans légende, à toutes les tailles. */
+function glyph(kind) {
+  const s = document.createElementNS(SVGNS, "svg");
+  s.setAttribute("viewBox", "0 0 16 14"); s.setAttribute("aria-hidden", "true");
+  const d = kind === "route" ? "M2.5 2.5 V11.5 M5 7 H12.5 M10 4.5 L12.5 7 L10 9.5"
+                             : "M2.5 7 H10 M7.5 4.5 L10 7 L7.5 9.5 M13.5 2.5 V11.5";
+  s.appendChild(svgEl("path", { d, class: "g" }));
+  return s;
+}
+function scopeChip(scope) {
+  const a = AXIS[scope] || { axis: "route", fr: scope, shared: false };
+  const c = el("span", "sc " + a.axis + (a.shared ? " shared" : ""));
+  c.appendChild(glyph(a.axis));
+  const n = el("span", "mono", scope); c.appendChild(n);
+  c.title = (DATA.scopeLegend[scope] || scope);
+  c.setAttribute("aria-label", scope + " — " + a.fr);
+  return c;
+}
+
+/* ── Arcs ────────────────────────────────────────────────────────────────── */
+function arcPath(a, b) {
+  const bow = (p, q, k) => {
+    const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+    const dx = q.x - p.x, dy = q.y - p.y, L = Math.hypot(dx, dy) || 1;
+    return { x: mx + (-dy / L) * k, y: my + (dx / L) * k };
+  };
+  const c = { x: CX, y: CY };
+  const q1 = bow(a, c, 34), q2 = bow(c, b, 34);
+  return `M ${a.x} ${a.y} Q ${q1.x} ${q1.y} ${c.x} ${c.y} Q ${q2.x} ${q2.y} ${b.x} ${b.y}`;
+}
+
+const arcEls = [];
+paths.forEach((p, i) => {
+  const g = svgEl("g", { class: "arc", "data-kind": p.kind, "data-from": p.from.f.id, "data-to": p.to.f.id,
+    role: "img", "aria-label": "Chemin inter-fabric : " + p.from.f.id + " annonce " + DATA.query.value +
+      ", " + p.to.f.id + " le classifie" + (p.kind === "approx" ? " par agrégat" : "") });
+  const d = arcPath(p.from.pos, p.to.pos);
+  g.appendChild(svgEl("path", { d, class: "arc-halo" }));
+  g.appendChild(svgEl("path", { d, class: "arc-core" }));
+  g.style.setProperty("--ai", i);
+  svg.appendChild(g); arcEls.push({ g, p });
+});
+
+/* Attache rompue pour les fabrics hors orbite : même préfixe, aucun chemin possible. */
+offOrb.forEach(m => {
+  const g = svgEl("g", { class: "arc", "data-kind": "broken", "data-to": m.f.id, role: "img",
+    "aria-label": m.f.id + " : préfixe présent mais dans un autre VRF, aucun chemin inter-fabric" });
+  g.appendChild(svgEl("path", { d: arcPath({ x: CX, y: CY - 4 }, m.pos), class: "arc-core" }));
+  g.style.setProperty("--ai", paths.length + 2);   /* tracé après l'apparition de la capsule */
+  svg.appendChild(g); arcEls.push({ g, p: { from: null, to: m, kind: "broken" } });
+});
+
+if (paths.length > ARC_DIM_THRESHOLD) scene.classList.add("arc-quiet");
+
+svg.insertBefore(svgEl("ellipse", { cx: CX, cy: CY, rx: RX, ry: RY, class: "orbit-guide" }), svg.firstChild);
+if (DENSE) svg.insertBefore(svgEl("ellipse", { cx: CX, cy: CY, rx: RX * .58, ry: RY * .58, class: "orbit-guide" }), svg.firstChild);
+svg.insertBefore(svgEl("line", { x1: 30, y1: CY, x2: 970, y2: CY, class: "axis-line" }), svg.firstChild);
+
+/* longueur de tracé pour l'animation d'entrée */
+svg.querySelectorAll(".arc path").forEach(p => {
+  try { p.style.setProperty("--len", Math.ceil(p.getTotalLength())); } catch (e) { p.style.setProperty("--len", 1400); }
+});
+
+if (offOrb.length) {
+  const lab = el("span", "gutter-label", "Hors orbite · aucun chemin");
+  lab.style.top = "calc(" + (offOrb[0].pos.y / 10) + "% - 62px)";
+  scene.appendChild(lab);
+}
+
+/* ── Capsules ────────────────────────────────────────────────────────────── */
+const ROLE_FR = { origin: "origine", dr: "DR", transit: "transit", consumer: "consommateur", conflict: "conflit" };
+
+function contractChips(host, provides, consumes, ctx) {
+  if (!provides.length && !consumes.length) return;
+  const box = el("div", "ctr");
+  const add = (name, kind, klass) => {
+    const b = el("button", "row " + klass); b.type = "button";
+    b.appendChild(el("span", "kind", kind + " "));
+    b.appendChild(el("span", "mono", name));
+    b.addEventListener("click", ev => { ev.stopPropagation(); showContract(name, ctx); });
+    box.appendChild(b);
+  };
+  provides.forEach(n => add(n, "provide", "prov"));
+  consumes.forEach(n => add(n, "consume", "cons"));
+  host.appendChild(box);
+}
+
+function buildFabric(m) {
+  const f = m.f;
+  const card = el("div", "fab" + (m.advertises ? " route" : "") + (m.classifies ? " sec" : "") + (m.conflict ? " anomaly" : ""));
+  card.style.left = (m.pos.x / 10) + "%";
+  card.style.top  = (m.pos.y / 10) + "%";
+  card.dataset.id = f.id;
+  card.style.setProperty("--i", model.indexOf(m));
+
+  const btn = el("button", "fab-btn"); btn.type = "button";
+  btn.setAttribute("aria-expanded", "false");
+  btn.setAttribute("aria-label", f.id + " · " + f.site + " · " +
+    (m.conflict ? "conflit, aucun L3Out" :
+     (m.advertises ? "annonce le préfixe" : "") + (m.advertises && m.classifies ? " et " : "") +
+     (m.classifies ? "classifie le préfixe" + (m.exact ? "" : " par agrégat") : "")));
+
+  const l1 = el("div", "fab-line1");
+  l1.appendChild(el("span", "fab-id mono", f.id));
+  l1.appendChild(el("span", m.conflict ? "tag-warn" : "fab-role", m.conflict ? "conflit" : (ROLE_FR[f.role] || f.role)));
+  btn.appendChild(l1);
+
+  const l3n = f.l3outs.length;
+  btn.appendChild(el("div", "fab-sub", f.site + " · " + (l3n ? l3n + " L3Out" + (l3n > 1 ? "s" : "") : "aucun L3Out") +
+    (f.bd ? " · " + f.bd.vrf : (f.l3outs[0] ? " · " + f.l3outs[0].vrf : ""))));
+
+  const ax = el("div", "fab-ax");
+  const mk = (kind, on, label) => {
+    const s = el("span", "ax " + kind + (on ? " on" : " off"));
+    s.appendChild(glyph(kind)); s.appendChild(el("span", "lbl", label));
+    s.setAttribute("aria-label", label + (on ? " : oui" : " : non"));
+    return s;
+  };
+  ax.appendChild(mk("route", m.advertises, "annoncé"));
+  ax.appendChild(mk("sec", m.classifies, "classifié"));
+  btn.appendChild(ax);
+  if (m.onlyApprox) {
+    const a = el("div", "ax-approx");
+    a.appendChild(el("span", "t", "match par agrégat"));
+    a.appendChild(el("span", "mono", "⊃ " + m.hits[0].sn.ip));
+    a.title = "Aucun l3extSubnet exact : la requête est couverte par un agrégat";
+    btn.appendChild(a);
+  }
+  card.appendChild(btn);
+
+  /* ── corps déplié ── */
+  const body = el("div", "fab-body");
+  const bin  = el("div", "fab-body-in");
+  body.appendChild(bin);
+
+  if (m.conflict) {
+    const w = el("div", "warn");
+    w.appendChild(el("span", null, "⚠"));
+    const t = el("span", null, "");
+    t.append("Même préfixe dans ", Object.assign(el("span", "mono", f.bd.tenant + " / " + f.bd.vrf), {}),
+      " — gateway ", el("span", "mono", f.bd.subnet.ip), ". VRF distinct de ",
+      el("span", "mono", refVrfName), ", aucun L3Out : ce fabric ne participe à aucun chemin. ",
+      "VLAN ", el("span", "mono", f.epgs[0] ? f.epgs[0].encap : "—"), " réutilisé.");
+    w.appendChild(t); bin.appendChild(w);
+  }
+
+  if (f.l3outs.length) {
+    bin.appendChild(el("h6", "sec-h", "L3Outs & ext-EPGs"));
+    f.l3outs.forEach(l3 => {
+      const r = el("button", "row"); r.type = "button";
+      r.appendChild(el("div", "row-t mono", l3.name));
+      r.appendChild(el("div", "row-s", "VRF " + l3.vrf + " · nodes " + l3.nodes.join(", ") + " · enforceRtctrl " + l3.enforceRtctrl));
+      r.addEventListener("click", ev => { ev.stopPropagation(); showL3out(l3, f); });
+      bin.appendChild(r);
+
+      const nest = el("div", "nest");
+      l3.extEpgs.forEach(ee => {
+        const er = el("button", "row"); er.type = "button";
+        er.appendChild(el("div", "row-t mono", ee.name));
+        er.appendChild(el("div", "row-s", "ext-EPG · prefGrMemb " + ee.prefGrMemb));
+        er.addEventListener("click", ev => { ev.stopPropagation(); showExtEpg(ee, l3, f); });
+        nest.appendChild(er);
+
+        ee.subnets.forEach(sn => {
+          const c = cidr(sn.ip);
+          const isExact = c.n === Q.n && c.len === Q.len;
+          const isCatch = c.len === 0;
+          const isHit = isExact || (contains(c, Q) && !isCatch);
+          const sr = el("button", "row"); sr.type = "button";
+          if (!isHit) sr.style.opacity = ".45";
+          const head = el("div", "pfx");
+          head.appendChild(el("span", "pfx-ip mono", sn.ip));
+          if (isExact)        head.appendChild(el("span", "badge-exact", "match exact"));
+          else if (isHit)     head.appendChild(el("span", "badge-approx", "agrégat ⊃"));
+          else if (isCatch)   head.appendChild(el("span", "badge-approx", "catch-all"));
+          sr.appendChild(head);
+          const sc = el("div", "scopes");
+          sn.scope.forEach(s => sc.appendChild(scopeChip(s)));
+          sr.appendChild(sc);
+          sr.addEventListener("click", ev => { ev.stopPropagation(); showSubnet(sn, ee, l3, f); });
+          nest.appendChild(sr);
+        });
+        contractChips(nest, ee.provides, ee.consumes, f);
+      });
+      bin.appendChild(nest);
+    });
+  }
+
+  if (f.bd) {
+    bin.appendChild(el("h6", "sec-h", "Bridge Domain & EPG"));
+    const br = el("button", "row"); br.type = "button";
+    br.appendChild(el("div", "row-t mono", f.bd.name));
+    br.appendChild(el("div", "row-s", "tenant " + f.bd.tenant + " · VRF " + f.bd.vrf + " · gw " + f.bd.subnet.ip));
+    br.addEventListener("click", ev => { ev.stopPropagation(); showBd(f.bd, f); });
+    bin.appendChild(br);
+    f.epgs.forEach(e => {
+      const r = el("button", "row"); r.type = "button";
+      r.appendChild(el("div", "row-t mono", e.name));
+      const drift = (m.encapDrift ? " ⚠ encap ≠ " + refEncap : "");
+      r.appendChild(el("div", "row-s", e.encap + " · " + (e.deployment === "aaep" ? "déployé via AAEP (aucun static port)" : "static port") + drift));
+      r.addEventListener("click", ev => { ev.stopPropagation(); showEpg(e, f); });
+      bin.appendChild(r);
+      contractChips(bin, e.provides, e.consumes, f);
+    });
+  }
+
+  card.appendChild(body);
+
+  /* interactions */
+  btn.addEventListener("click", () => toggle(m, card, btn));
+  const hl = on => { if (!scene.classList.contains("has-open")) highlight(on ? f.id : null); };
+  card.addEventListener("mouseenter", () => hl(true));
+  card.addEventListener("mouseleave", () => hl(false));
+  btn.addEventListener("focus", () => hl(true));
+  btn.addEventListener("blur", () => hl(false));
+
+  scene.appendChild(card);
+  m.card = card; m.btn = btn;
+  return card;
+}
+model.forEach(buildFabric);
+
+/* ── Survol : met en évidence le chemin ──────────────────────────────────── */
+function highlight(id) {
+  if (!id) { scene.removeAttribute("data-hl"); arcEls.forEach(a => a.g.classList.remove("hl"));
+             model.forEach(m => m.card.classList.remove("hl")); return; }
+  scene.setAttribute("data-hl", id);
+  const peers = new Set([id]);
+  arcEls.forEach(a => {
+    const on = (a.p.from && a.p.from.f.id === id) || a.p.to.f.id === id;
+    a.g.classList.toggle("hl", on);
+    if (on) { if (a.p.from) peers.add(a.p.from.f.id); peers.add(a.p.to.f.id); }
+  });
+  model.forEach(m => m.card.classList.toggle("hl", peers.has(m.f.id)));
+}
+
+/* ── Ouvrir / fermer une capsule (zoom sémantique en place) ──────────────── */
+let openM = null;
+function closeAll() {
+  if (openM) { openM.card.classList.remove("is-open"); openM.btn.setAttribute("aria-expanded", "false");
+               openM.card.style.removeProperty("--dx"); openM.card.style.removeProperty("--dy"); }
+  openM = null; scene.classList.remove("has-open"); highlight(null);
+}
+function toggle(m, card, btn) {
+  if (openM === m) { closeAll(); showOverview(); return; }
+  closeAll();
+  openM = m; scene.classList.add("has-open");
+  card.classList.add("is-open"); btn.setAttribute("aria-expanded", "true");
+  /* les arcs du fabric ouvert restent allumés */
+  arcEls.forEach(a => a.g.classList.toggle("hl", (a.p.from && a.p.from.f.id === m.f.id) || a.p.to.f.id === m.f.id));
+  /* Recadrage : la capsule dépliée doit rester entièrement dans la scène.
+     On mesure la géométrie FINALE en neutralisant la transition le temps d'un reflow,
+     on revient à l'état replié, puis on rejoue l'ouverture avec le décalage calculé —
+     sinon la mesure se ferait au milieu de l'animation et ne servirait à rien. */
+  card.classList.add("measuring");
+  void card.offsetWidth;
+  const r = card.getBoundingClientRect(), s = scene.getBoundingClientRect(), pad = 14;
+  let dx = 0, dy = 0;
+  if (r.left  < s.left   + pad) dx = s.left   + pad - r.left;
+  if (r.right > s.right  - pad) dx = s.right  - pad - r.right;
+  if (r.top   < s.top    + pad) dy = s.top    + pad - r.top;
+  if (r.bottom > s.bottom - pad) dy = s.bottom - pad - r.bottom;
+  card.classList.remove("is-open");
+  void card.offsetWidth;
+  card.classList.remove("measuring");
+  card.classList.add("is-open");
+  card.style.setProperty("--dx", Math.round(dx) + "px");
+  card.style.setProperty("--dy", Math.round(dy) + "px");
+  showFabric(m);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4 · Inspecteur — attributs bruts + DN
+   ═══════════════════════════════════════════════════════════════════════════ */
+const iK = document.getElementById("insp-kicker"), iT = document.getElementById("insp-title"),
+      iB = document.getElementById("insp-body"),   iF = document.getElementById("insp-foot");
+
+function insp(kicker, title, dn) { iK.textContent = kicker; iT.textContent = title; iB.textContent = "";
+  iF.textContent = dn ? "DN · " + dn : ""; return iB; }
+function kv(host, pairs) {
+  const d = el("dl", "kv");
+  pairs.forEach(p => { if (p[1] == null || p[1] === "") return;
+    d.appendChild(el("dt", null, p[0])); d.appendChild(el("dd", p[2] === false ? "" : "mono", String(p[1]))); });
+  host.appendChild(d); return d;
+}
+function section(host, t) { const s = el("div", "insp-sec"); s.appendChild(el("h6", null, t)); host.appendChild(s); return s; }
+
+function showOverview() {
+  const b = insp("Vue d'ensemble", DATA.query.value, null);
+  kv(b, [["Type", DATA.query.type, false], ["Fabrics", model.length + " porteurs du préfixe", false],
+         ["En orbite", orbit.length + " avec un l3extSubnet correspondant", false],
+         ["Hors orbite", offOrb.length + " (conflit de VRF)", false]]);
+
+  const s1 = section(b, "Chemins inter-fabric");
+  paths.forEach(p => {
+    const r = el("button", "pathrow" + (p.kind === "approx" ? " approx" : "")); r.type = "button";
+    r.appendChild(el("span", "mono", p.from.f.id));
+    r.appendChild(el("span", "arrow", "⟶"));
+    r.appendChild(el("span", "mono", p.to.f.id));
+    if (p.kind === "approx") r.appendChild(el("span", "badge-approx", "agrégat"));
+    r.addEventListener("mouseenter", () => { if (!openM) highlight(p.to.f.id); });
+    r.addEventListener("mouseleave", () => { if (!openM) highlight(null); });
+    r.addEventListener("click", () => { toggle(p.to, p.to.card, p.to.btn); });
+    s1.appendChild(r);
+  });
+  offOrb.forEach(m => {
+    const r = el("button", "pathrow approx"); r.type = "button";
+    r.appendChild(el("span", "mono", m.f.id));
+    r.appendChild(el("span", "arrow", "⊘"));
+    r.appendChild(el("span", null, "aucun chemin · " + m.f.bd.vrf));
+    r.addEventListener("click", () => toggle(m, m.card, m.btn));
+    s1.appendChild(r);
+  });
+
+  const s2 = section(b, "Les deux axes");
+  [["route", "export-rtctrl", "Advertised Externally", "Le préfixe est ANNONCÉ vers l'extérieur. C'est du routage. Ces fabrics sont à gauche de l'axe."],
+   ["sec", "import-security", "External Subnets for the External EPG", "Le préfixe CLASSIFIE le trafic entrant dans l'ext-EPG. C'est de la sécurité. Ces fabrics sont à droite."],
+   ["route", "import-rtctrl", "Import Route Control", "Filtre les routes reçues. Axe routage, sens entrant."],
+   ["sec", "shared-security", "Shared Security Import", "Classification inter-VRF (route leaking). Puce en pointillés."],
+   ["route", "shared-rtctrl", "Shared Route Control", "Annonce inter-VRF. Puce en pointillés."]
+  ].forEach(([ax, name, en, fr]) => {
+    const it = el("div", "legend-item");
+    it.appendChild(scopeChip(name));
+    const t = el("div", "txt"); t.appendChild(el("b", null, en)); t.append(" — " + fr);
+    it.appendChild(t); s2.appendChild(it);
+  });
+}
+
+function showFabric(m) {
+  const f = m.f;
+  const b = insp("Fabric", f.id, f.l3outs[0] ? f.l3outs[0].dn : (f.bd ? f.bd.dn : ""));
+  kv(b, [["Site", f.site, false], ["Rôle", ROLE_FR[f.role] || f.role, false],
+         ["APIC", f.apicVersion], ["Backup", f.backupTs],
+         /* AXIS[s] est gardé : un scope ACI inconnu du tableau (nouvelle version d'APIC)
+            ne doit pas faire planter tout le panneau d'inspection. */
+         ["Annonce", m.advertises ? "oui — " + m.scopes.filter(s => AXIS[s] && AXIS[s].axis === "route").join(", ") : "non", false],
+         ["Classifie", m.classifies ? "oui — " + m.scopes.filter(s => AXIS[s] && AXIS[s].axis === "sec").join(", ") : "non", false],
+         ["Match", m.hits.length ? (m.exact ? "exact " + DATA.query.value : "par agrégat " + m.hits[0].sn.ip) : "aucun l3extSubnet", false]]);
+  if (m.encapDrift) {
+    const s = section(b, "Écart détecté");
+    s.appendChild(el("div", "warn", "Encap " + m.encapDrift + " ici, " + refEncap + " sur le fabric d'origine."));
+  }
+  if (m.conflict) {
+    const s = section(b, "Anomalie");
+    s.appendChild(el("div", "warn", "Préfixe dupliqué dans " + f.bd.tenant + " / " + f.bd.vrf +
+      " (gateway " + f.bd.subnet.ip + "), sans L3Out. Recouvrement d'adressage hors du VRF " + refVrfName + "."));
+  }
+}
+function showL3out(l3, f) {
+  const b = insp("L3Out · " + f.id, l3.name, l3.dn);
+  kv(b, [["VRF", l3.vrf], ["Domain", l3.domain], ["enforceRtctrl", l3.enforceRtctrl],
+         ["Border leaves", l3.nodes.join(", ")], ["ext-EPGs", l3.extEpgs.map(e => e.name).join(", ")]]);
+}
+function showExtEpg(ee, l3, f) {
+  const b = insp("ext-EPG · " + f.id, ee.name, ee.dn);
+  kv(b, [["L3Out", l3.name], ["VRF", l3.vrf], ["prefGrMemb", ee.prefGrMemb],
+         ["Provides", ee.provides.join(", ") || "—"], ["Consumes", ee.consumes.join(", ") || "—"]]);
+  const s = section(b, "l3extSubnet");
+  ee.subnets.forEach(sn => {
+    const r = el("button", "row"); r.type = "button";
+    r.appendChild(el("div", "row-t mono", sn.ip));
+    const sc = el("div", "scopes"); sn.scope.forEach(x => sc.appendChild(scopeChip(x))); r.appendChild(sc);
+    r.addEventListener("click", () => showSubnet(sn, ee, l3, f));
+    s.appendChild(r);
+  });
+}
+function showSubnet(sn, ee, l3, f) {
+  const c = cidr(sn.ip);
+  const kind = (c.n === Q.n && c.len === Q.len) ? "match exact"
+             : c.len === 0 ? "catch-all 0.0.0.0/0 — non retenu comme match"
+             : contains(c, Q) ? "agrégat contenant la requête" : "sans rapport";
+  const b = insp("l3extSubnet · " + f.id, sn.ip, ee.dn + "/extsubnet-[" + sn.ip + "]");
+  kv(b, [["ip", sn.ip], ["scope", sn.scope.join(",")], ["aggregate", sn.aggregate || "(vide)"],
+         ["ext-EPG", ee.name], ["L3Out", l3.name], ["Correspondance", kind, false]]);
+  const s = section(b, "Rôle du préfixe ici");
+  sn.scope.forEach(x => {
+    const it = el("div", "legend-item");
+    it.appendChild(scopeChip(x));
+    const t = el("div", "txt"); t.textContent = DATA.scopeLegend[x] || x; it.appendChild(t);
+    s.appendChild(it);
+  });
+}
+function showBd(bd, f) {
+  const b = insp("Bridge Domain · " + f.id, bd.name, bd.dn);
+  kv(b, [["Tenant", bd.tenant], ["VRF", bd.vrf], ["Subnet", bd.subnet.ip], ["Subnet scope", bd.subnet.scope],
+         ["unicastRoute", bd.unicastRoute], ["arpFlood", bd.arpFlood], ["unkMacUcastAct", bd.unkMacUcastAct]]);
+}
+function showEpg(e, f) {
+  const b = insp("EPG · " + f.id, e.name, e.dn);
+  kv(b, [["Application Profile", e.ap], ["Encap", e.encap],
+         ["Déploiement", e.deployment === "aaep" ? "AAEP (aucun static port)" : "static port", false],
+         ["AAEP", e.aaep], ["Domain", e.domain],
+         ["Paths", e.paths.length ? e.paths.map(p => p.tDn).join(" | ") : "—"],
+         ["Provides", e.provides.join(", ") || "—"], ["Consumes", e.consumes.join(", ") || "—"]]);
+}
+function showContract(name, f) {
+  const c = DATA.contracts[name];
+  if (!c) return;
+  const b = insp("Contract" + (f ? " · " + f.id : ""), name, c.dn);
+  kv(b, [["scope", c.scope]]);
+  c.subjects.forEach(sub => {
+    const s = section(b, "Subject · " + sub.name);
+    sub.filters.forEach(fl => {
+      const r = el("div", "row");
+      r.appendChild(el("div", "row-t mono", fl.name));
+      r.appendChild(el("div", "row-s", "etherT " + fl.etherT + " · prot " + fl.prot + " · ports " + fl.dFromPort + "–" + fl.dToPort));
+      s.appendChild(r);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5 · Contrôles globaux + intro
+   ═══════════════════════════════════════════════════════════════════════════ */
+document.getElementById("core").addEventListener("click", () => { closeAll(); showOverview(); });
+document.getElementById("btn-reset").addEventListener("click", () => { closeAll(); showOverview(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeAll(); showOverview(); } });
+
+function playIntro() {
+  scene.classList.remove("intro"); void scene.offsetWidth; scene.classList.add("intro");
+  /* l'intro dure ~1,8 s puis la scène est définitivement calme */
+  setTimeout(() => scene.classList.remove("intro"), 2200);
+}
+document.getElementById("btn-replay").addEventListener("click", playIntro);
+
+showOverview();
+playIntro();
+</script>

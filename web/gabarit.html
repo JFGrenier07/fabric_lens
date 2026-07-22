@@ -1,0 +1,2865 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fabric Lens — carte &amp; orbite</title>
+<!--
+  FABRIC LENS — PRISE 2 — UNE APPLICATION, DEUX VUES INTERCHANGEABLES
+  ===================================================================
+  LA REGLE STRUCTURANTE (E5)
+  a. L'ORBITALE est le DEHORS. Son sujet est TOUJOURS de niveau 3 : un PREFIXE.
+     Jamais un VLAN — un VLAN est local a une fabrique et n'a rien a faire en orbite.
+     Demander l'orbitale depuis un VLAN remonte automatiquement au subnet qu'il porte
+     (lien deduit des attributs ip/addr des objets du jeu VLAN).
+  b. La CARTE est le DEDANS, et elle est MONO-FABRIQUE. Aucun selecteur de fabric,
+     aucun onglet, aucune comparaison cote a cote : on ne voit que la fabrique dans
+     laquelle on est entre. Pour en changer il faut REMONTER a l'orbitale.
+  c. La PLONGEE (orbitale -> carte) est le moment cle : la capsule s'ouvre en grand,
+     la carte arrive de plus loin que l'ecran et le chemin se redessine devant vous.
+
+  MODELE (4 lignes)
+  1. La colonne de gauche est la CARTE DE REFERENCE : l'arbre du path COMPLET du fabric
+     courant. La liste des fabrics n'y apparait QUE dans l'orbitale (E5b) ; dans la carte
+     elle est remplacee par « vous etes dans <FABRIQUE> » et la sortie.
+  2. La zone centrale est la seule chose qui change : CARTE (graphe SVG du chemin entier,
+     dessine une fois, seule la loupe/viewBox se deplace) ou ORBITALE (les fabrics gravitent
+     autour du PREFIXE ; la position sur l'axe porte le sens).
+  3. Le panneau du bas est partage par les deux vues, redimensionnable a la souris jusqu'au
+     plein ecran : classe ACI, DN complet copiable, TOUS les attributs bruts, voisins cliquables.
+  4. Basculer (touche O) ne perd jamais le contexte : l'objet selectionne reste selectionne,
+     le fabric courant reste courant, le panneau ne se vide pas.
+
+  LECTURE GEOMETRIQUE D'UN VLAN DE TRANSIT
+  Un VLAN « client » s'arrete sur un EPG : toute sa chaine tient a l'interieur du cadre.
+  Un VLAN « transit » porte une interface de L3Out avec une adresse IP et un peering : la
+  carte trace alors une LIMITE DU FABRIC (filet vertical en pointilles) et pose le voisin
+  BGP/OSPF DE L'AUTRE COTE, dans une bande « hors fabric ». Le VLAN se lit comme sortant.
+
+  DEGRADATION A 200 OBJETS (un fabric)
+  Le layout est en colonnes fixes par « kind » (rang ACI) : cout O(n), aucun solveur, le
+  graphe ne se reorganise jamais. A 200 objets il devient HAUT, pas illisible. Trois soupapes
+  sont deja actives : (a) la loupe cadre ~3,6 colonnes, donc la lisibilite ne depend pas du
+  nombre total de noeuds ; (b) l'arbre lateral defile et reste la carte de reference ;
+  (c) hors voisinage, tout tombe a opacity .3. Au-dela de ~120 objets il faudrait replier les
+  colonnes homogenes (« 14 port blocks » en un noeud groupe, depliable) et n'injecter dans le
+  DOM que les colonnes qui intersectent la viewBox courante.
+
+  DEGRADATION A 20 FABRICS
+  Barre laterale : la liste des fabrics est deja une liste defilante triee (correspondances
+  d'abord) — 20 lignes de 20px tiennent sans changement. Vue orbitale : au-dela de 9 fabrics
+  en orbite, layout() bascule en mode dense (une orbite sur deux passe sur l'ellipse
+  interieure, rayon x0.58, pas angulaire reduit, capsules sans sous-titre) ; les fabrics sans
+  correspondance sont empiles dans la gouttiere du bas, pas disperses. Les arcs sont
+  O(annonceurs x classificateurs) : au-dela de ARC_MAX (40), on ne trace que les arcs du
+  fabric survole ou selectionne, le reste devient une nappe estompee.
+
+  ROBUSTESSE : une edge qui pointe vers un dn absent de `nodes` est ignoree ; un contract,
+  un IPG, un peer manquant se lit « — » ; un fabric a 0 objet affiche un cartouche « aucune
+  correspondance » au lieu de planter. Aucun acces reseau, aucun CDN, un seul fichier.
+-->
+<style>
+/* Nocturne — design-system tokens and component classes.
+   Source: Claude Design project "Cisco ACI Policy Analyzer"
+   (_ds/nocturne-6dbba83f-ae08-459a-8073-fe7f5074721f/styles.css)
+   This file is the source of truth for the look. */
+/* Pas d'@import distant : les prototypes doivent se charger hors ligne (un @import
+   vers fonts.googleapis.com bloque le rendu jusqu'au timeout réseau). La pile
+   --font-heading / --font-body utilise Inter si elle est installée localement,
+   sinon system-ui — même résultat qu'aujourd'hui sur une machine hors ligne. */
+
+:root {
+  --color-bg: #161826;
+  --color-surface: #232532;
+  --color-text: #e9e9ed;
+  --color-accent: #9184d9;
+  --color-accent-2: #a7a1db;
+  --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale. */
+  --color-neutral-100: #f3f5fe;
+  --color-neutral-200: #e4e7f5;
+  --color-neutral-300: #cfd3e5;
+  --color-neutral-400: #b2b6ca;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #75798c;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --color-accent-100: #f5f4ff;
+  --color-accent-200: #e7e5fe;
+  --color-accent-300: #d2cefd;
+  --color-accent-400: #b5abfc;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #796cbf;
+  --color-accent-700: #5d5294;
+  --color-accent-800: #423a6a;
+  --color-accent-900: #2b2741;
+
+  --color-accent-2-100: #f5f4ff;
+  --color-accent-2-200: #e7e5fe;
+  --color-accent-2-300: #d2cefd;
+  --color-accent-2-400: #b5afe8;
+  --color-accent-2-500: #9690c9;
+  --color-accent-2-600: #7972a9;
+  --color-accent-2-700: #5c5783;
+  --color-accent-2-800: #423e5d;
+  --color-accent-2-900: #2b293a;
+
+  --color-section: #262a60;
+  --color-section-glow: #353b80;
+  --color-section-ghost: #4c5397;
+
+  --font-heading: "Inter", system-ui, sans-serif;
+  --font-heading-weight: 500;
+  --font-body: "Inter", system-ui, sans-serif;
+
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 0 0 1px #3f424d;
+  --shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0,0,0,0.55);
+  --shadow-lg: 0 0 0 1px #9397ab, 0 16px 40px rgba(0,0,0,0.65);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+.lighten { mix-blend-mode: lighten; background-color: transparent; }
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 400; }
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
+}
+h1 { font-size: 42px; }
+h2 { font-size: 32px; }
+h3 { font-size: 25px; }
+h4 { font-size: 20px; }
+h5 { font-size: 16px; }
+h6 { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-accent); text-underline-offset: 3px; }
+img { display: block; max-width: 100%; }
+figure { margin: 0; }
+figcaption {
+  font-size: 11px; margin-top: var(--space-1);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, Menlo, monospace; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+/* ── Rules ────────────────────────────────────────────────────────────── */
+.hr {
+  height: 1px; border: 0; margin: var(--space-4) 0;
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 14px; line-height: 1.2; color: var(--color-text);
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn svg { display: block; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.btn-primary:active { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.btn-icon { width: 36px; height: 36px; padding: 0; }
+.btn-block { width: 100%; margin-top: var(--space-2); }
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.input {
+  width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  font-size: 14px; color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+textarea.input { min-height: 90px; resize: vertical; }
+.radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.radio input, .seg-opt input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.radio .dot {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--color-divider);
+}
+.radio:hover .dot { border-color: var(--color-accent); }
+.radio input:checked + .dot {
+  border-color: var(--color-accent); background: var(--color-accent);
+  box-shadow: inset 0 0 0 4px var(--color-bg);
+}
+.radio input:focus-visible + .dot { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.seg-opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+}
+.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+.seg-opt:has(input:checked) { color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
+.seg-opt:not(:has(input:checked)):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.seg-opt:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* ── Cards ────────────────────────────────────────────────────────────── */
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface);
+}
+.card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+.card-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 17px; line-height: 1.2;
+}
+.card-body { margin: 0; font-size: 13px; opacity: 0.8; flex: 1; }
+.card-meta {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.elev-sm { box-shadow: var(--shadow-sm); }
+.elev-md { box-shadow: var(--shadow-md); }
+.elev-lg { box-shadow: var(--shadow-lg); }
+
+/* ── Tags ─────────────────────────────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; font-size: 11px;
+  letter-spacing: 0.02em; padding: 3px 10px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.tag-accent { background: var(--color-accent-800); color: var(--color-accent-100); }
+.tag-accent-2 { background: var(--color-accent-2-800); color: var(--color-accent-2-100); }
+.tag-neutral { background: var(--color-neutral-800); color: var(--color-neutral-100); }
+.tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
+
+/* ── Navigation ───────────────────────────────────────────────────────── */
+.nav {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: none;
+}
+.nav-brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 18px; margin-right: auto;
+}
+.nav a { color: inherit; text-decoration: none; font-size: 14px; }
+.nav a:hover, .nav a[aria-current='page'] { color: var(--color-accent); }
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th {
+  text-align: left; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  padding: var(--space-2); border-bottom: 1px solid transparent;
+}
+.table td { padding: var(--space-2); border-bottom: 1px solid transparent; }
+.table thead tr {
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr {
+  background: linear-gradient(to right,
+    transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+    color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr:hover {
+  background:
+    linear-gradient(color-mix(in srgb, var(--color-text) 4%, transparent),
+                    color-mix(in srgb, var(--color-text) 4%, transparent)) no-repeat 0 0 / 100% 100%,
+    linear-gradient(to right,
+      transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+      color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+
+/* ── Dialog ───────────────────────────────────────────────────────────── */
+.dialog-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+}
+.dialog {
+  width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--color-surface); box-shadow: var(--shadow-lg);
+}
+.dialog-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 20px;
+}
+.dialog-body { font-size: 14px; opacity: 0.85; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+
+/* ══ Chrome ══════════════════════════════════════════════════════════════ */
+/* --color-accent est RESERVE au porteur de la requete (l'objet qui porte le VLAN
+   ou le prefixe cherche, le noyau de l'orbite, la limite du fabric). Le simple
+   fait d'etre selectionne ou courant utilise --fl-sel, plus calme : sans quoi
+   l'accent finit partout et ne veut plus rien dire. */
+:root { --fl-warn: var(--color-accent-2); --fl-sel: var(--color-accent-2-400); --ph: 208px; }
+html, body { height: 100%; }
+body { overflow: hidden; }
+
+#app {
+  display: grid;
+  grid-template-columns: clamp(230px, 20vw, 292px) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  opacity: 0; animation: appin .42s cubic-bezier(.22,.61,.36,1) .06s forwards;
+}
+@keyframes appin { from { opacity: 0; transform: scale(.995); } to { opacity: 1; transform: none; } }
+
+.topbar {
+  grid-column: 1 / -1; min-width: 0;
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  background: linear-gradient(to right, transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.brand { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+.brand-dot {
+  width: 24px; height: 24px; flex: none; display: grid; place-items: center;
+  border-radius: var(--radius-sm); background: var(--color-accent-900); color: var(--color-accent-300);
+  font-size: 10px; letter-spacing: .06em;
+  box-shadow: 0 0 0 1px var(--color-accent-800), 0 0 14px -4px var(--color-accent);
+}
+.brand-name { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 13px; }
+
+/* recherche */
+.search { position: relative; flex: 0 1 300px; min-width: 168px; }
+.search .input { min-height: 30px; font-size: 13px; padding-left: 26px; }
+.search .mag { position: absolute; left: 8px; top: 6px; font-size: 12px; color: var(--color-neutral-500); }
+.search .kbd-hint { position: absolute; right: 8px; top: 7px; font-size: 9.5px; color: var(--color-neutral-600); }
+.qlist {
+  position: absolute; z-index: 40; top: 34px; left: 0; right: 0; padding: var(--space-1);
+  background: var(--color-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  max-height: 260px; overflow: auto;
+}
+.qlist[hidden] { display: none; }
+.qopt {
+  display: flex; align-items: baseline; gap: var(--space-2); width: 100%;
+  background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--color-neutral-300); font: inherit; font-size: 12px; text-align: left;
+  padding: 3px var(--space-2);
+}
+.qopt .t { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600); }
+.qopt .d { margin-left: auto; font-size: 10px; color: var(--color-neutral-600); }
+.qopt:hover, .qopt[data-cur="1"] { background: color-mix(in srgb, var(--color-accent) 15%, transparent); color: var(--color-accent-100); }
+
+.query {
+  display: flex; align-items: baseline; gap: var(--space-2); flex: none;
+  padding: 1px var(--space-3); border: 1px solid var(--color-accent-800); border-radius: var(--radius-md);
+  box-shadow: 0 0 16px -8px var(--color-accent);
+}
+.query-k { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-500); }
+.query-v { font-size: 14px; color: var(--color-accent-300); }
+
+.spacer { margin-left: auto; }
+.topbar .btn { font-size: 12px; flex: none; padding: 3px var(--space-3); }
+.seg-opt { padding: 4px 10px; font-size: 12px; }
+.seg-opt .k { font-size: 9px; color: var(--color-neutral-600); }
+.freshness { font-size: 9.5px; color: var(--color-neutral-600); flex: none; text-align: right; line-height: 1.3; }
+
+/* ══ Barre laterale partagee ══════════════════════════════════════════════ */
+.side {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  background: linear-gradient(to bottom, transparent, var(--color-divider) 40px,
+    var(--color-divider) calc(100% - 40px), transparent) no-repeat right / 1px 100%;
+}
+.sec-h {
+  font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-neutral-600);
+  padding: var(--space-3) var(--space-4) 2px; display: flex; justify-content: space-between; align-items: baseline;
+}
+.sec-h .n { color: var(--color-neutral-700); }
+.fabs { max-height: 34vh; overflow-y: auto; padding: 0 var(--space-2) var(--space-2); flex: none; }
+.fab {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 21px;
+  border: 0; border-left: 2px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--color-neutral-300); font: inherit; font-size: 11px;
+  text-align: left; cursor: pointer; padding: 1px var(--space-2) 1px 4px;
+}
+.fab:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); color: var(--color-text); }
+.fab[aria-current="true"] {
+  border-left-color: var(--fl-sel); color: var(--color-accent-2-100);
+  background: color-mix(in srgb, var(--fl-sel) 13%, transparent);
+}
+.fab .st { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--color-neutral-700); }
+.fab[data-hit="1"] .st { background: var(--color-accent); box-shadow: 0 0 6px var(--color-accent); }
+.fab .id { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fab .rl { font-size: 8.5px; letter-spacing: .06em; color: var(--color-neutral-500); white-space: nowrap; }
+.fab .wr { color: var(--fl-warn); font-size: 10px; }
+.fab[data-absent="1"] { color: var(--color-neutral-700); }
+
+.tree { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--space-2) var(--space-4); }
+.tree .sec-h { padding-left: var(--space-2); padding-right: var(--space-2); }
+.tree > .sec-h:first-child { padding-top: 0; }
+.row {
+  display: flex; align-items: center; gap: 5px; width: 100%; height: 17px;
+  padding: 0 var(--space-2) 0 0; border: 0; border-left: 2px solid transparent;
+  border-radius: var(--radius-sm); background: transparent;
+  color: var(--color-neutral-300); font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+}
+.row:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); color: var(--color-text); }
+.row .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .cls { font-size: 8.5px; color: var(--color-neutral-600); white-space: nowrap; letter-spacing: .04em; }
+.row .bul { width: 4px; height: 4px; flex: none; border-radius: 50%; background: var(--color-neutral-700); }
+.row[data-target="1"] .bul { background: var(--color-accent); box-shadow: 0 0 5px var(--color-accent); }
+.row[data-ghost="1"] { color: var(--color-neutral-600); }
+.row[data-near="1"] { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+.row[aria-current="true"] {
+  border-left-color: var(--fl-sel); color: var(--color-accent-2-100);
+  background: color-mix(in srgb, var(--fl-sel) 14%, transparent);
+}
+.row[aria-current="true"] .cls { color: var(--color-accent-2-400); }
+.row[data-dead="1"] { cursor: default; color: var(--color-neutral-600); }
+.row[data-dead="1"]:hover { background: transparent; }
+.side-foot { padding: var(--space-2) var(--space-4) var(--space-3); font-size: 9.5px; color: var(--color-neutral-600); }
+
+/* E5(b) — dans la CARTE il n'y a pas de selecteur de fabric : la carte est
+   l'interieur d'UNE fabrique. On affiche seulement OU l'on est, et la sortie. */
+.fabcur { padding: 0 var(--space-2) var(--space-2); flex: none; }
+.fabcur[hidden] { display: none; }
+.fabcur-in {
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--color-accent); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+}
+.fabcur-k { font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-neutral-500); }
+.fabcur-id { font-size: 13px; color: var(--color-accent-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fabcur-s { font-size: 10px; color: var(--color-neutral-400); }
+.fabcur-w { font-size: 10px; color: var(--fl-warn); margin-top: 2px; }
+.fabcur-n { font-size: 9px; color: var(--color-neutral-600); padding: var(--space-2) var(--space-1) 0; line-height: 1.4; }
+.fabcur .btn { font-size: 11.5px; padding: 3px var(--space-3); }
+
+/* ══ Scene ════════════════════════════════════════════════════════════════ */
+.stage { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.center { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.layer { position: absolute; inset: 0; }
+.layer[hidden] { display: none; }
+.layer svg { width: 100%; height: 100%; display: block; }
+.tools { position: absolute; top: var(--space-3); right: var(--space-3); display: flex; gap: var(--space-2); z-index: 3; }
+.tools .btn { font-size: 11.5px; padding: 3px var(--space-3); background: color-mix(in srgb, var(--color-bg) 84%, transparent); }
+.hintbar {
+  position: absolute; left: var(--space-4); bottom: var(--space-2); z-index: 3;
+  font-size: 9.5px; color: var(--color-neutral-600); display: flex; gap: var(--space-3); flex-wrap: wrap;
+}
+kbd {
+  font-family: ui-monospace, Consolas, monospace; font-size: 9px;
+  border: 1px solid var(--color-neutral-800); border-radius: 3px; padding: 0 3px; color: var(--color-neutral-400);
+}
+.empty {
+  position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+  font-size: 12px; color: var(--color-neutral-600);
+}
+
+/* — carte — */
+.lane-band { fill: color-mix(in srgb, var(--color-text) 3%, transparent); }
+.lane-name { fill: var(--color-neutral-600); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; }
+.edge { fill: none; stroke: var(--color-neutral-800); stroke-width: 1; transition: stroke .25s, opacity .25s, stroke-width .25s; }
+.edge.cross { stroke-dasharray: 3 3; stroke: var(--color-neutral-700); }
+.edge.exit { stroke: var(--color-accent-600); stroke-dasharray: none; }
+.edge.dim { opacity: .26; }
+.edge.hot { stroke: var(--fl-sel); stroke-width: 1.6; opacity: 1; }
+.edge-lbl {
+  fill: var(--color-accent-2-300); font-size: 7.5px; letter-spacing: .04em; opacity: 0; transition: opacity .25s;
+  stroke: var(--color-bg); stroke-width: 2.6px; paint-order: stroke fill;
+}
+.edge-lbl.on { opacity: .9; }
+.node { cursor: pointer; transition: opacity .28s ease; }
+.node .box { fill: var(--color-surface); stroke: var(--color-neutral-800); stroke-width: 1; transition: stroke .25s, stroke-width .25s; }
+.node .kick { fill: var(--color-neutral-500); font-size: 6.8px; letter-spacing: .11em; text-transform: uppercase; }
+.node .name { fill: var(--color-text); font-size: 10px; }
+.node .sub { fill: var(--color-neutral-400); font-size: 7.4px; }
+.node .note { fill: var(--color-accent-300); font-size: 7.4px; opacity: 0; transition: opacity .25s; }
+.node .tgt { fill: var(--color-accent); opacity: 0; }
+.node[data-target="1"] .tgt { opacity: 1; }
+.node:hover .box { stroke: var(--color-neutral-600); }
+.node.dim { opacity: .3; }
+.node.near .box { stroke: var(--color-accent-2-600); }
+.node.near .name { fill: var(--color-neutral-100); }
+.node.sel .box { stroke: var(--fl-sel); stroke-width: 1.8; }
+.node.sel { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--fl-sel) 55%, transparent)); }
+.node.sel .name { fill: var(--color-accent-2-100); }
+/* le porteur de la requete, lui, garde l'accent plein — c'est le sujet */
+.node[data-target="1"] .box { stroke: var(--color-accent-700); }
+.node[data-target="1"].sel .box { stroke: var(--color-accent); }
+.node.sel .note { opacity: 1; }
+.node[data-warn="1"] .box { stroke: var(--fl-warn); stroke-dasharray: 4 3; }
+.node[data-out="1"] .box { fill: var(--color-bg); stroke: var(--color-accent-700); stroke-dasharray: 5 3; }
+.node .warn { fill: var(--fl-warn); font-size: 7px; letter-spacing: .08em; }
+.fabric-edge { stroke: var(--color-accent-700); stroke-width: 1; stroke-dasharray: 2 6; }
+.fabric-edge-lbl { fill: var(--color-accent-600); font-size: 7.5px; letter-spacing: .16em; text-transform: uppercase; }
+.outband { fill: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+.node[data-target="1"] .kick { fill: var(--color-accent-400); }
+
+/* intro : une seule passe, puis ecran calme */
+@keyframes pop { from { opacity: 0; transform: translateY(5px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+.intro .node { opacity: 0; animation: pop .34s cubic-bezier(.34,1.4,.64,1) both; transform-box: fill-box; transform-origin: center; }
+.intro .edge { animation: draw .5s ease both; }
+
+/* — orbite — */
+.orb-guide { fill: none; stroke: var(--color-divider); stroke-width: 1; stroke-dasharray: 2 7; opacity: .6; }
+.orb-axis { stroke: var(--color-divider); stroke-width: 1; opacity: .5; }
+.orb-axis-lbl { fill: var(--color-neutral-600); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
+.orb-core-ring { fill: none; stroke: var(--color-accent); stroke-width: 1.2; opacity: .8; }
+.orb-core-bg { fill: var(--color-bg); }
+.orb-core-v { fill: var(--color-accent-200); font-size: 20px; text-anchor: middle; }
+.orb-core-m { fill: var(--color-neutral-500); font-size: 9.5px; text-anchor: middle; letter-spacing: .08em; }
+.arc { fill: none; stroke: var(--color-accent-700); stroke-width: 1; opacity: .55; transition: opacity .2s, stroke .2s; }
+.arc.approx { stroke-dasharray: 4 4; }
+.arc.spoke-transit { stroke: var(--color-accent-600); stroke-dasharray: 5 3; }
+.arc.broken { stroke: var(--color-neutral-800); stroke-dasharray: 2 5; opacity: .5; }
+.arc.hot { stroke: var(--fl-sel); opacity: 1; }
+.arc.quiet { opacity: .16; }
+.cap { cursor: pointer; }
+.cap .capbox { fill: var(--color-surface); stroke: var(--color-neutral-800); stroke-width: 1; transition: stroke .2s; }
+.cap:hover .capbox { stroke: var(--color-neutral-500); }
+.cap .capid { fill: var(--color-text); font-size: 12px; }
+.cap .capsub { fill: var(--color-neutral-400); font-size: 8.5px; }
+.cap .capax { font-size: 8px; letter-spacing: .06em; }
+.cap .ax-route { fill: var(--color-accent-300); }
+.cap .ax-sec { fill: var(--color-neutral-300); }
+.cap[data-cur="1"] .capbox { stroke: var(--fl-sel); stroke-width: 1.6; }
+.cap[data-cur="1"] { filter: drop-shadow(0 0 8px color-mix(in srgb, var(--fl-sel) 45%, transparent)); }
+.cap[data-cur="1"] .capid { fill: var(--color-accent-2-100); }
+.cap[data-absent="1"] .capbox { stroke-dasharray: 3 3; }
+.cap[data-absent="1"] .capid { fill: var(--color-neutral-600); }
+.cap .capwarn { fill: var(--fl-warn); font-size: 8px; letter-spacing: .06em; }
+.gutter-lbl { fill: var(--color-neutral-700); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; }
+.orb-core-l3 { fill: var(--color-neutral-600); font-size: 8px; text-anchor: middle; letter-spacing: .16em; text-transform: uppercase; }
+.orb-core-src { fill: var(--color-accent-2-400); font-size: 9px; text-anchor: middle; }
+@keyframes orbin { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+.orb-in { animation: orbin .32s cubic-bezier(.22,.61,.36,1) both; transform-box: view-box; transform-origin: center; }
+
+/* ══ E5(c) — la PLONGEE dans la fabrique ═════════════════════════════════
+   C'est le moment cle : on quitte le dehors (orbite) pour l'interieur d'une
+   fabrique. L'orbite s'ouvre en grand et s'efface, la carte arrive de plus
+   loin que l'ecran, et un cartouche nomme la fabrique dans laquelle on tombe. */
+.dive {
+  position: absolute; inset: 0; z-index: 6; display: grid; place-items: center;
+  pointer-events: none; text-align: center;
+}
+.dive[hidden] { display: none; }
+.dive .ring {
+  position: absolute; width: 210px; height: 210px; border-radius: 50%;
+  border: 1px solid var(--color-accent); opacity: 0;
+  animation: divering .62s cubic-bezier(.22,.61,.36,1) forwards;
+}
+.dive .ring:nth-child(2) { animation-delay: .09s; }
+.dive .ring:nth-child(3) { animation-delay: .18s; }
+.dive .lbl {
+  position: relative; opacity: 0;
+  animation: divelbl .68s cubic-bezier(.22,.61,.36,1) forwards;
+}
+.dive .lbl .k { display: block; font-size: 9px; letter-spacing: .3em; text-transform: uppercase; color: var(--color-neutral-500); }
+.dive .lbl .v {
+  display: block; font-size: 27px; letter-spacing: .04em; color: var(--color-accent-200);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+@keyframes divering {
+  0%   { opacity: .85; transform: scale(.28); }
+  100% { opacity: 0;   transform: scale(3.1); }
+}
+@keyframes divelbl {
+  0%   { opacity: 0; transform: scale(.72); letter-spacing: .5em; }
+  32%  { opacity: 1; transform: scale(1.02); }
+  70%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.06); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dive { display: none !important; }
+  .intro .node, .intro .edge { animation: none !important; opacity: 1 !important; }
+}
+
+/* ══ Panneau bas — redimensionnable ══════════════════════════════════════ */
+.panel {
+  flex: none; height: var(--ph); min-height: 30px;
+  display: flex; flex-direction: column; min-width: 0;
+  background: linear-gradient(to right, transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent) no-repeat top / 100% 1px;
+}
+.grip {
+  height: 7px; flex: none; cursor: ns-resize; position: relative;
+  display: grid; place-items: center;
+}
+.grip::after {
+  content: ''; width: 46px; height: 2px; border-radius: 2px;
+  background: var(--color-neutral-800); transition: background .2s, width .2s;
+}
+.grip:hover::after, .grip.drag::after { background: var(--color-accent); width: 72px; }
+.grip:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.panel-bar { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-4) var(--space-1); min-width: 0; }
+.panel-bar > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-bar .kick { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-accent); flex: none; }
+.panel-bar .nm { font-size: 13px; flex: 0 2 auto; }
+.panel-bar .cls { font-size: 10.5px; color: var(--color-neutral-500); flex: none; }
+.panel-bar .note { font-size: 10.5px; color: var(--color-accent-300); flex: 1 1 auto; }
+.panel-bar .sp { margin-left: auto; display: flex; gap: var(--space-2); align-items: center; flex: none; overflow: visible; }
+.panel-bar .btn { font-size: 11.5px; padding: 2px var(--space-3); }
+.panel-body {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: var(--space-6); padding: var(--space-1) var(--space-4) var(--space-3);
+  flex: 1 1 auto; min-height: 0; overflow: hidden;
+}
+.panel.closed .panel-body { display: none; }
+.pcol { min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; }
+.pcol h6 { color: var(--color-neutral-600); margin: 0 0 2px; font-size: 9px; letter-spacing: .12em; flex: none; }
+.dnbox {
+  background: var(--color-bg); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3); font-size: 10.5px; line-height: 1.5; color: var(--color-neutral-200);
+  word-break: break-all; user-select: all; max-height: 34%; min-height: 34px; overflow: auto; flex: none;
+}
+.scroll { overflow: auto; min-height: 0; }
+.attrs .table td { padding: 1px var(--space-2); font-size: 11px; vertical-align: top; }
+.attrs .table td.k { color: var(--color-neutral-500); width: 40%; word-break: break-word; }
+.attrs .table td.v { color: var(--color-neutral-100); word-break: break-all; }
+.attrs .table tr.hi td.k { color: var(--color-accent-400); }
+.attrs .table tr.hi td.v { color: var(--color-accent-200); }
+.nbrs { display: flex; flex-direction: column; gap: 2px; }
+.nbr {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  background: transparent; border: 1px solid var(--color-divider); border-radius: var(--radius-sm);
+  color: var(--color-neutral-300); font: inherit; font-size: 10.5px; text-align: left;
+  padding: 2px var(--space-2); cursor: pointer;
+}
+.nbr:hover { border-color: var(--color-accent); color: var(--color-accent-100); }
+.nbr .rel { font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--color-neutral-600); white-space: nowrap; }
+.nbr .arw { color: var(--color-accent-600); flex: none; }
+.nbr .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 3px; }
+/* une requete de 200 caracteres ne doit pas elargir le document */
+.empty, #fl-err, .empty .mono { overflow-wrap: anywhere; word-break: break-word; }
+.empty { max-width: 100%; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 1px var(--space-2);
+  border-radius: var(--radius-sm); border: 1px solid var(--color-divider); color: var(--color-neutral-300);
+  background: transparent; font-family: inherit; cursor: default;
+}
+button.chip { cursor: pointer; }
+button.chip:hover { border-color: var(--color-accent); color: var(--color-accent-100); }
+.chip .ck { font-size: 8px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-neutral-600); }
+.chip.on { border-color: var(--color-accent); color: var(--color-accent-200); }
+.chip.warn { border-color: var(--fl-warn); color: var(--fl-warn); }
+.chip.dead { color: var(--color-neutral-600); }
+.copied { font-size: 10px; color: var(--color-accent-300); }
+.pnote { font-size: 10.5px; color: var(--color-neutral-500); }
+.pnote b { color: var(--color-accent-300); font-weight: 400; }
+.axis-legend { display: flex; gap: var(--space-3); font-size: 10px; color: var(--color-neutral-500); }
+
+/* ══ Etroit — rien de fixe ne doit deborder sous 1280px ══════════════════ */
+.topbar { flex-wrap: wrap; row-gap: var(--space-1); }
+.query { min-width: 0; }
+.query-v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-bar { flex-wrap: wrap; row-gap: 2px; }
+@media (max-width: 1400px) { .freshness { display: none; } }
+@media (max-width: 1240px) {
+  .panel-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); }
+  .panel-body .pcol:nth-child(3) { grid-column: 1 / -1; min-height: 60px; }
+  .hintbar span:nth-child(n+6) { display: none; }
+}
+@media (max-width: 1080px) {
+  #app { grid-template-columns: clamp(190px, 24vw, 230px) minmax(0, 1fr); }
+  .search { flex: 1 1 160px; }
+  .brand-name { display: none; }
+}
+@media (max-width: 880px) {
+  .panel-body { grid-template-columns: minmax(0, 1fr); }
+  .panel-body .pcol:nth-child(3) { grid-column: auto; }
+  .hintbar { display: none; }
+}
+
+/* Repere de version - HORS DU FLUX, deliberement.
+   .topbar est en flex-wrap et deja pleine sous 1280 px : mesure faite, meme un
+   badge de 6 caracteres la faisait passer a deux rangees, et la scene perdait
+   ~30 px de hauteur (un portable 1366x768 a 125 % tombe pile dedans). Un repere
+   de version ne doit rien coûter a la mise en page. */
+#fl-build {
+  position: fixed; right: 6px; bottom: 4px; z-index: 60;
+  font: 10px/1 ui-monospace, monospace; letter-spacing: .02em;
+  color: var(--color-neutral-600);
+  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
+  border: 1px solid var(--color-neutral-800); border-radius: 4px;
+  padding: 2px 6px; white-space: nowrap; pointer-events: none;
+  opacity: .72;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SEQUENCE D'OUVERTURE — reprise fidele de la maquette d'origine.
+   Deux temps : la CONSTELLATION dit l'echelle du probleme (toutes les
+   fabriques d'un coup), puis la CHAINE DE POLICY dit ce que l'outil resout.
+   Overlay pur : position fixed, aucun impact sur la mise en page.
+   ══════════════════════════════════════════════════════════════════════════ */
+@keyframes fl-pop      { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
+@keyframes fl-draw     { to { stroke-dashoffset: 0; } }
+@keyframes fl-converge { to { opacity: 0; transform: scale(.55); } }
+@keyframes fl-fadein   { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fl-rise     { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fl-grow     { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes fl-pulse    { 0%,100% { box-shadow: 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent); }
+                         50%     { box-shadow: 0 0 26px color-mix(in srgb, var(--color-accent) 70%, transparent); } }
+@keyframes fl-logo     { from { opacity: 0; transform: scale(.4); } 60% { transform: scale(1.08); } to { opacity: 1; transform: scale(1); } }
+@keyframes fl-appin    { from { opacity: 0; transform: scale(.99); } to { opacity: 1; transform: scale(1); } }
+
+#fl-intro {
+  position: fixed; inset: 0; z-index: 90; background: var(--color-bg);
+  display: grid; place-items: center;
+  transition: opacity .72s ease;   /* suit VIT : 0.45 x 1.6 */
+}
+#fl-intro[data-fading="1"] { opacity: 0; pointer-events: none; }
+#fl-intro .fscene { position: relative; width: 560px; height: 460px; }
+#fl-intro .fconstel { position: absolute; inset: 0; }
+#fl-intro .fconstel .ffield { position: absolute; left: 0; top: 30px; width: 560px; height: 360px; }
+#fl-intro svg { position: absolute; inset: 0; width: 560px; height: 360px; overflow: visible; }
+#fl-intro .fdot { position: absolute; border-radius: 50%; }
+#fl-intro .flab {
+  position: absolute; font: 10px/1 ui-monospace, monospace;
+  color: var(--color-neutral-400); white-space: nowrap;
+}
+#fl-intro .flogo {
+  position: absolute; left: 280px; top: 180px; transform: translate(-50%, -50%);
+  width: 56px; height: 56px; border-radius: 14px;
+  background: var(--color-accent-900); border: 1px solid var(--color-accent-600);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--color-accent-200); font: 600 20px/1 ui-monospace, monospace;
+}
+#fl-intro .fcap {
+  position: absolute; left: 0; bottom: 0; width: 560px; text-align: center;
+  font: 12px/1.4 ui-monospace, monospace; color: var(--color-neutral-400);
+}
+#fl-intro .fchain {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; opacity: 0;
+}
+#fl-intro .fsteps {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  flex: none;            /* sinon le conteneur comprime toute la pile */
+}
+#fl-intro .fspine {
+  position: absolute; left: 50%; top: 0; bottom: 34px; width: 2px;
+  transform: translateX(-50%); transform-origin: bottom;
+  background: linear-gradient(var(--color-accent), color-mix(in srgb, var(--color-accent) 20%, transparent));
+}
+#fl-intro .fstep {
+  height: auto;          /* jamais heritee d'une regle voisine */
+  position: relative; z-index: 1; display: flex; flex-direction: column;
+  flex: none;            /* chaque etage garde sa hauteur : mesure 17 px au
+                            lieu de 46 quand le navigateur avait le droit de
+                            comprimer - le texte devenait illisible */
+  align-items: center; gap: 1px; margin: 3px 0; padding: 7px 16px;
+  border-radius: var(--radius-md); min-width: 220px; text-align: center;
+  background: var(--color-surface); border: 1px solid var(--color-divider);
+}
+#fl-intro .fstep.ftop {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: var(--color-accent);
+}
+#fl-intro .fstep .fk { font: 8.5px/1 ui-monospace, monospace; letter-spacing: .1em;
+                    text-transform: uppercase; color: var(--color-neutral-500); }
+#fl-intro .fstep.ftop .fk { color: var(--color-accent-300); }
+#fl-intro .fstep .fv { font: 600 12px/1.2 ui-monospace, monospace; color: var(--color-text); }
+#fl-app-in { animation: fl-appin .5s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  #fl-intro { display: none !important; }
+  #fl-app-in { animation: none !important; }
+}
+</style>
+
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-dot mono">FL</div>
+      <div class="brand-name">Fabric Lens</div>
+    </div>
+
+    <div class="search">
+      <span class="mag" aria-hidden="true">⌕</span>
+      <input class="input mono" id="q" type="text" autocomplete="off" spellcheck="false"
+             placeholder="VLAN · subnet" aria-label="Rechercher un VLAN ou un subnet"
+             aria-expanded="false" aria-controls="qlist">
+      <span class="kbd-hint"><kbd>/</kbd></span>
+      <div class="qlist" id="qlist" role="listbox" hidden></div>
+    </div>
+
+    <div class="query">
+      <span class="query-k" id="qk">VLAN</span>
+      <span class="query-v mono" id="qv">100</span>
+    </div>
+
+    <div class="seg" role="group" aria-label="Vue">
+      <label class="seg-opt"><input type="radio" name="view" value="carte" checked>Carte <span class="k">C</span></label>
+      <label class="seg-opt"><input type="radio" name="view" value="orbite">Orbitale <span class="k">O</span></label>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="freshness" id="freshness"></div>
+    <button class="btn btn-secondary" id="btn-replay" type="button" title="Rejouer l'animation d'entrée">↻</button>
+  </header>
+
+  <nav class="side" aria-label="Fabrics et chemin complet">
+    <div class="sec-h" id="fabs-h"><span>Fabrics</span><span class="n" id="fab-n"></span></div>
+    <div class="fabs" id="fabs"></div>
+    <div class="fabcur" id="fabcur" hidden></div>
+    <div class="sec-h"><span id="tree-title">Chemin complet</span><span class="n" id="tree-n"></span></div>
+    <div class="tree" id="tree"></div>
+    <div class="side-foot" id="side-foot"></div>
+  </nav>
+
+  <section class="stage" id="stage">
+    <div class="center" id="center">
+      <div class="layer" id="l-carte"></div>
+      <div class="layer" id="l-orbit" hidden></div>
+      <div class="dive" id="dive" hidden aria-hidden="true"></div>
+      <div class="tools" id="tools"></div>
+      <div class="hintbar">
+        <span><kbd>↑</kbd><kbd>↓</kbd> parcourir</span>
+        <span><kbd>←</kbd><kbd>→</kbd> remonter / descendre</span>
+        <span><kbd>↵</kbd> entrer</span>
+        <span><kbd>Échap</kbd> retour</span>
+        <span><kbd>O</kbd> plonger ⇄ remonter</span>
+        <span><kbd>F</kbd> où vit ce préfixe</span>
+        <span><kbd>V</kbd> le VLAN qui le porte</span>
+        <span><kbd>1</kbd>…<kbd>9</kbd> fabrique (orbitale)</span>
+        <span><kbd>D</kbd> détail</span>
+      </div>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="grip" id="grip" role="separator" tabindex="0" aria-orientation="horizontal"
+           aria-label="Redimensionner le panneau de détail (flèches haut/bas, double-clic pour plein écran)"></div>
+      <div class="panel-bar">
+        <span class="kick" id="p-kick"></span>
+        <span class="nm mono" id="p-name"></span>
+        <span class="cls mono" id="p-cls"></span>
+        <span class="note" id="p-note"></span>
+        <span class="sp">
+          <span class="copied" id="p-copied" hidden>DN copié</span>
+          <button class="btn btn-secondary" id="btn-prefix" type="button" hidden></button>
+          <button class="btn btn-secondary" id="btn-vlan" type="button" hidden></button>
+          <button class="btn btn-secondary" id="btn-copy" type="button">Copier le DN <kbd>C</kbd></button>
+          <button class="btn btn-ghost" id="btn-panel" type="button" aria-expanded="true">Masquer ▾</button>
+        </span>
+      </div>
+      <div class="panel-body">
+        <div class="pcol">
+          <h6>Distinguished Name</h6>
+          <div class="dnbox mono" id="p-dn"></div>
+          <h6 style="margin-top:var(--space-2)">Objet</h6>
+          <div class="scroll attrs"><table class="table"><tbody id="p-ident"></tbody></table></div>
+        </div>
+        <div class="pcol">
+          <h6 id="p-attrs-h">Configuration brute</h6>
+          <div class="scroll attrs"><table class="table"><tbody id="p-attrs"></tbody></table></div>
+        </div>
+        <div class="pcol">
+          <h6 id="p-nbrs-h">Voisins</h6>
+          <div class="scroll nbrs" id="p-nbrs"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     LES DONNEES ET LE RESOLVEUR, INLINES — un seul fichier, aucune requete
+     ---------------------------------------------------------------------------
+     Contrainte du terrain : la page s'ouvre depuis un file:// sur un poste
+     Windows verrouille. Pas de <script src>, pas de fetch, pas de module
+     externe — donc tout vit ici :
+       · web/data/fabrics.json  les 5 fabriques distillees
+       · web/data/digests.json  l'empreinte de reference de chaque requete
+       · web/resolve.js         le resolveur (portage verifie du Python)
+       · web/selfcheck.js       SHA-256 en JS pur + rejeu des empreintes
+     Les deux .js sont recopies A L'IDENTIQUE, a trois details pres, tous
+     mecaniques : le mot-cle `export` retire, l'entree ligne de commande node
+     (qui utilise import.meta et node:fs) supprimee, et le tout enferme dans
+     une IIFE qui publie l'API sur window. Aucune logique n'a ete reecrite.
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- FL:BLOCK fabrics src=web/data/fabrics.json xform=json-verbatim-oneline -->
+<script type="application/json" id="fl-fabrics-data">{"fabrics":[]}</script>
+<!-- FL:END fabrics -->
+<!-- FL:BLOCK digests src=web/data/digests.json xform=json-verbatim-oneline -->
+<script type="application/json" id="fl-digests-data">{"vlan":{},"subnet":{}}</script>
+<!-- FL:END digests -->
+
+<!-- FL:BLOCK resolve src=web/resolve.js xform=strip-export,drop-cli-tail,nul-to-u0000,iife-window(FLResolve) -->
+<script>/* injecte par build_page.py */</script>
+<!-- FL:END resolve -->
+
+<!-- FL:BLOCK selfcheck src=web/selfcheck.js xform=strip-export,iife-window(FLSelfCheck) -->
+<script>/* injecte par build_page.py */</script>
+<!-- FL:END selfcheck -->
+
+<script>
+"use strict";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0 · Outils
+   ═══════════════════════════════════════════════════════════════════════════ */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = s => document.querySelector(s);
+const el = (t, a) => { const n = document.createElementNS(NS, t); for (const k in a) n.setAttribute(k, a[k]); return n; };
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const trunc = (s, n) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const svgText = (cls, x, y, txt, extra) => {
+  const t = el('text', Object.assign({ class: cls, x, y }, extra || {}));
+  t.textContent = txt; return t;
+};
+
+/* prefixe -> reseau normalise ; sert a relier un objet subnet a un jeu de donnees */
+function netKey(cidr) {
+  if (!cidr || typeof cidr !== 'string' || cidr.indexOf('/') < 0) return null;
+  const [ip, l] = cidr.split('/');
+  const len = parseInt(l, 10);
+  const o = ip.split('.').map(n => parseInt(n, 10));
+  if (o.length !== 4 || o.some(n => !isFinite(n)) || !isFinite(len)) return null;
+  const v = ((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0;
+  const m = len === 0 ? 0 : (0xffffffff << (32 - len)) >>> 0;
+  const n = (v & m) >>> 0;
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.') + '/' + len;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1 · LE RESOLVEUR EN LIGNE — plus aucun jeu de donnees fige
+   ---------------------------------------------------------------------------
+   L'application ne porte plus 4 reponses pre-calculees : elle porte les cinq
+   fabriques distillees et le RESOLVEUR (portage JS verifie contre le resolveur
+   Python : 72 requetes, 5782 noeuds, 0 ecart), et repond a la demande.
+   DATASETS n'est donc plus une constante mais un CACHE de meme forme : tout
+   l'affichage en aval est inchange, c'est precisement le contrat du portage.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RES = window.FLResolve;
+let FABRICS = null, DIGESTS = null, BOOT_ERR = null;
+try {
+  if (!RES) throw new Error('le résolveur inline ne s’est pas chargé (window.FLResolve absent)');
+  FABRICS = RES.loadFabrics(JSON.parse(document.getElementById('fl-fabrics-data').textContent));
+  DIGESTS = JSON.parse(document.getElementById('fl-digests-data').textContent);
+} catch (e) { BOOT_ERR = e; }
+const NFAB = FABRICS ? FABRICS.length : 0;
+
+const DATASETS = Object.create(null);      // cle -> graphe resolu (cache)
+const vlanKey = n => 'vlan-' + n;
+const subnetKey = s => 'subnet-' + s;
+
+/* Resolution a la demande, memorisee. Si le resolveur leve, l'exception
+   REMONTE : c'est l'appelant qui decide quoi afficher — jamais d'ecran fige. */
+function ensureDataset(key) {
+  if (DATASETS[key]) return DATASETS[key];
+  if (!FABRICS) return null;
+  let d = null;
+  const mv = /^vlan-(\d+)$/.exec(key);
+  if (mv) d = RES.resolveVlan(FABRICS, parseInt(mv[1], 10));
+  else if (key.indexOf('subnet-') === 0) d = RES.resolveSubnet(FABRICS, key.slice(7));
+  if (d) DATASETS[key] = d;
+  return d;
+}
+const hasHit = d => !!d && (d.fabrics || []).some(f => f.status && f.status !== 'absent');
+
+/* ── Index des VLAN et des prefixes REELLEMENT presents ───────────────────
+   Les suggestions ne sont pas une liste ecrite a la main : elles sortent des
+   objets des backups. Un VLAN existe des qu'il apparait dans une encapsulation
+   (EPG, AAEP, interface de L3Out, L3Out flottant) ou dans un bloc de pool ; un
+   prefixe existe des qu'il apparait sur un fvSubnet ou un l3extSubnet.
+   Cet index ne sert QU'A suggerer et a diagnostiquer : la barre de recherche,
+   elle, accepte n'importe quel VLAN et n'importe quel prefixe valides. */
+const VLAN_IX = new Map(), PFX_IX = new Map();
+const BLK_MAX = 64;   // un bloc de pool tres large n'est pas enumere : la liste
+                      // ne doit pas se remplir de 3000 VLAN jamais deployes
+(function indexFabrics() {
+  if (!FABRICS) return;
+  const addVlan = (n, fid, role) => {
+    if (n === null || n === undefined || n < 1 || n > 4094) return;
+    let e = VLAN_IX.get(n);
+    if (!e) { e = { n: n, fabs: new Set(), roles: new Set() }; VLAN_IX.set(n, e); }
+    e.fabs.add(fid);
+    if (role) e.roles.add(role);
+  };
+  for (const fab of FABRICS) {
+    const fid = fab.id;
+    for (const mo of fab.mos) {
+      const a = mo.a || {};
+      if (a.encap !== undefined && a.encap !== null && a.encap !== '') {
+        addVlan(RES.encapNum(a.encap), fid,
+          mo.c.indexOf('l3ext') === 0 ? 'transit'
+            : (mo.c === 'fvRsPathAtt' || mo.c === 'infraRsFuncToEpg' ? 'client' : null));
+      }
+      if (mo.c === 'fvnsEncapBlk') {
+        const lo = RES.encapNum(a.from), hi = RES.encapNum(a.to);
+        if (lo !== null && hi !== null && hi >= lo && hi - lo <= BLK_MAX)
+          for (let v = lo; v <= hi; v++) addVlan(v, fid, null);
+      }
+      if (mo.c === 'fvSubnet' || mo.c === 'l3extSubnet') {
+        const net = RES.parseIpNetwork(String(a.ip || ''), false);
+        if (!net) continue;
+        const k = RES.netToString(net);
+        let e = PFX_IX.get(k);
+        if (!e) { e = { k: k, net: net, fabs: new Set(), kinds: new Set() }; PFX_IX.set(k, e); }
+        e.fabs.add(fid);
+        e.kinds.add(mo.c === 'fvSubnet' ? 'gateway' : 'externe');
+      }
+    }
+  }
+})();
+
+/* Le catalogue garde la forme que la barre de recherche attendait ; seule sa
+   provenance change (les donnees, plus les quatre jeux figes). */
+const CATALOG = [];
+[...VLAN_IX.values()].sort((a, b) => a.n - b.n).forEach(e => {
+  e.cat = {
+    key: vlanKey(e.n), type: 'vlan', value: String(e.n), net: null, kindLabel: 'VLAN',
+    hits: e.fabs.size, total: NFAB, role: [...e.roles].sort().join(' + ')
+  };
+  CATALOG.push(e.cat);
+});
+[...PFX_IX.values()].sort((a, b) =>
+  (a.net.version - b.net.version) ||
+  (a.net.addr < b.net.addr ? -1 : a.net.addr > b.net.addr ? 1 : a.net.prefix - b.net.prefix)
+).forEach(e => {
+  e.cat = {
+    key: subnetKey(e.k), type: 'subnet', value: e.k, net: e.k, kindLabel: 'SUBNET',
+    hits: e.fabs.size, total: NFAB, role: [...e.kinds].sort().join(' + ')
+  };
+  CATALOG.push(e.cat);
+});
+
+/* prefixe (avec ou sans bits hote, v4 comme v6) -> entree du catalogue */
+function normNet(v) {
+  if (!v || typeof v !== 'string') return null;
+  const n = RES.parseIpNetwork(v, false);
+  return n ? { k: RES.netToString(n), net: n } : null;
+}
+function datasetForPrefix(p) {
+  const n = normNet(p);
+  if (!n) return null;
+  const e = PFX_IX.get(n.k);
+  return e ? e.cat : null;
+}
+
+/* ── E5(a) · L'ORBITE A TOUJOURS UN SUBNET POUR SUJET ─────────────────────
+   L'orbitale repond a une question de NIVEAU 3 : ou vit ce prefixe, qui
+   l'annonce, qui l'accepte, a travers les fabrics. Un VLAN (niveau 2) n'est
+   jamais un sujet d'orbite : il est local a une fabrique. Quand on demande
+   l'orbitale depuis un VLAN, on REMONTE au prefixe que ce VLAN porte.
+   Le lien est deduit des donnees : on cherche, dans tous les fabrics du jeu
+   VLAN, les attributs ip/addr, et on retient le prefixe le plus represente
+   pour lequel il existe un prefixe connu des backups.
+   Le lien se calcule maintenant A LA DEMANDE, sur le jeu DEJA resolu : meme
+   regle qu'avant (le prefixe le plus represente parmi les attributs ip/addr),
+   mais sans avoir a resoudre au chargement les centaines de requetes
+   possibles. Le resultat est memorise, dans les deux sens. */
+const SUBNET_OF_VLAN = new Map(), VLAN_OF_SUBNET = new Map();
+function subnetSubject(k) {
+  if (SUBNET_OF_VLAN.has(k)) return SUBNET_OF_VLAN.get(k);
+  const d = DATASETS[k];
+  let best = null, n = 0;
+  if (d && d.query && d.query.type === 'vlan') {
+    const tally = new Map();
+    (d.fabrics || []).forEach(f => {
+      const nodes = f.nodes || {};
+      for (const dn in nodes) {
+        const at = nodes[dn].attrs || {};
+        [at.ip, at.addr].forEach(v => {
+          const c = datasetForPrefix(v);
+          if (c) tally.set(c.key, (tally.get(c.key) || 0) + 1);
+        });
+      }
+    });
+    tally.forEach((v, key) => { if (v > n) { n = v; best = key; } });
+  }
+  SUBNET_OF_VLAN.set(k, best);
+  if (best && !VLAN_OF_SUBNET.has(best)) VLAN_OF_SUBNET.set(best, k);
+  return best;
+}
+/* Sens inverse : quel VLAN porte ce prefixe ? Meme methode, sur les
+   encapsulations rencontrees dans le graphe du prefixe (l'EPG rattache au BD
+   qui porte la gateway est deja dans ce graphe). */
+function vlanCarrying(k) {
+  if (VLAN_OF_SUBNET.has(k)) return VLAN_OF_SUBNET.get(k);
+  const d = DATASETS[k];
+  let best = null, n = 0;
+  if (d && d.query && d.query.type === 'subnet') {
+    const tally = new Map();
+    (d.fabrics || []).forEach(f => {
+      const nodes = f.nodes || {};
+      for (const dn in nodes) {
+        const v = RES.encapNum((nodes[dn].attrs || {}).encap);
+        if (v !== null && VLAN_IX.has(v)) tally.set(v, (tally.get(v) || 0) + 1);
+      }
+    });
+    tally.forEach((v, key) => { if (v > n) { n = v; best = key; } });
+  }
+  const key = best === null ? null : vlanKey(best);
+  VLAN_OF_SUBNET.set(k, key);
+  if (key && !SUBNET_OF_VLAN.has(key)) SUBNET_OF_VLAN.set(key, k);
+  return key;
+}
+const valueOf = k => (DATASETS[k] && DATASETS[k].query) ? String(DATASETS[k].query.value)
+  : String(k).replace(/^vlan-/, '').replace(/^subnet-/, '');
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2 · Rangs ACI — la colonne d'un objet depend de sa CLASSE, jamais des donnees.
+       Le layout est donc stable d'un fabric a l'autre et d'un backup a l'autre.
+       Rang >= OUTSIDE : l'objet est HORS du fabric (voisin de peering).
+   ═══════════════════════════════════════════════════════════════════════════ */
+const OUTSIDE = 12;
+const RANK = {
+  encapBlk: [0, 0], vlanPool: [0, 1], domain: [0, 2], aaep: [0, 3], aaepDeploy: [0, 4], ipg: [0, 4],
+  portSelector: [0, 5], ifProfile: [0, 6], portBlk: [0, 6], switchProfile: [0, 7], nodeBlk: [0, 8],
+  tenant: [1, 2], ap: [1, 3], epg: [1, 4], bd: [1, 5], staticPath: [1, 5],
+  vrf: [1, 6], subnet: [1, 6], l3out: [1, 6], contract: [1, 6],
+  l3outNodeProfile: [1, 7], extEpg: [1, 7], subject: [1, 7], routingProto: [1, 7],
+  l3outIfProfile: [1, 8], l3extSubnet: [1, 8], filter: [1, 8],
+  l3outPath: [1, 9], entry: [1, 9],
+  bgpPeer: [1, OUTSIDE]
+};
+const rankOf = k => RANK[k] || [1, 6];
+const LANE_NAME = [
+  'Chaîne access policies · du VLAN pool aux leaves et aux ports',
+  'Chaîne logique · du tenant à l’EPG, au L3Out et aux contrats'
+];
+const NW = 136, NH = 36, GW = 120, GH = 26, PITCH_X = 164, PITCH_Y = 52, PAD = 28;
+const KIND_FR = {
+  encapBlk: 'encap block', vlanPool: 'vlan pool', domain: 'domain', aaep: 'AAEP', aaepDeploy: 'déploiement AAEP',
+  ipg: 'IPG', portSelector: 'port selector', ifProfile: 'interface profile', portBlk: 'port block',
+  switchProfile: 'switch profile', nodeBlk: 'node block', epg: 'EPG', staticPath: 'static path',
+  ap: 'application profile', tenant: 'tenant', bd: 'bridge domain', vrf: 'VRF', subnet: 'subnet',
+  l3out: 'L3Out', l3outPath: 'interface de L3Out', l3outIfProfile: 'logical interface profile',
+  l3outNodeProfile: 'logical node profile', bgpPeer: 'peer', routingProto: 'protocole', extEpg: 'ext-EPG',
+  l3extSubnet: 'préfixe externe', contract: 'contract', subject: 'subject', filter: 'filter', entry: 'entry'
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3 · Etat
+   ═══════════════════════════════════════════════════════════════════════════ */
+let DSKEY = null, DATA = null;   // fixes au demarrage, apres la premiere resolution
+let fabIdx = 0, sel = null, view = 'carte';
+let M = null, FLAT = [], hist = [], vb = null, anim = null, zmode = 'over';
+let ORB = null, orbCur = 0, introTimer = null;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4 · Modele d'un fabric (vue carte)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function build(fab) {
+  const nodes = [], byDn = new Map(), out = new Map(), inc = new Map();
+  const raw = fab.nodes || {};
+  const hitSet = new Set((fab.hits || []).map(h => h.dn));
+  const hitOf = new Map((fab.hits || []).map(h => [h.dn, h]));
+  const edgesAll = (fab.edges || []).filter(e => e && raw[e.from] && raw[e.to]);  // dn fantome ignore
+  for (const e of edgesAll) {
+    if (!out.has(e.from)) out.set(e.from, []);
+    if (!inc.has(e.to)) inc.set(e.to, []);
+    out.get(e.from).push(e); inc.get(e.to).push(e);
+  }
+  const used = new Set();
+  for (const dn in raw) used.add(rankOf(raw[dn].kind)[1]);
+  const cols = [...used].sort((a, b) => a - b);
+  const colIdx = new Map(cols.map((c, i) => [c, i]));
+  const outCols = new Set(cols.filter(c => c >= OUTSIDE).map(c => colIdx.get(c)));
+
+  const slots = new Map(), laneRows = [0, 0];
+  const qv = DATA.query ? String(DATA.query.value) : '';
+  for (const dn in raw) {
+    const n = raw[dn], r = rankOf(n.kind);
+    const lane = r[0], col = colIdx.get(r[1]);
+    const key = lane + ':' + col, k = slots.get(key) || 0;
+    slots.set(key, k + 1);
+    laneRows[lane] = Math.max(laneRows[lane], k + 1);
+    const ghost = n.matchesQuery === false;
+    nodes.push({ dn, n, lane, col, slot: k, ghost, w: ghost ? GW : NW, h: ghost ? GH : NH, outside: col >= 0 && outCols.has(col) });
+  }
+  const laneY = [36, 0];
+  const laneH = [laneRows[0] * PITCH_Y, laneRows[1] * PITCH_Y];
+  laneY[1] = laneY[0] + laneH[0] + (laneRows[0] ? 50 : 0);
+  for (const o of nodes) {
+    byDn.set(o.dn, o);
+    o.x = PAD + o.col * PITCH_X + (NW - o.w) / 2;
+    o.cy = laneY[o.lane] + (laneRows[o.lane] - slots.get(o.lane + ':' + o.col)) / 2 * PITCH_Y
+         + o.slot * PITCH_Y + PITCH_Y / 2;
+    o.y = o.cy - o.h / 2;
+    const at = o.n.attrs || {};
+    o.target = o.n.matchesQuery === true || hitSet.has(o.dn) ||
+      (DATA.query.type === 'vlan' && (o.n.kind === 'encapBlk' || at.encap === 'vlan-' + qv)) ||
+      (DATA.query.type === 'subnet' && (netKey(at.ip) === netKey(String(DATA.query.value)) ||
+        netKey(at.addr) === netKey(String(DATA.query.value))));
+    o.hit = hitOf.get(o.dn) || null;
+    o.warn = !!(o.n.deployment && o.n.deployment.conflict);
+  }
+  const width = PAD * 2 + Math.max(0, colIdx.size - 1) * PITCH_X + NW;
+  const height = Math.max(140, laneY[1] + laneH[1] + 26);
+  // limite du fabric : entre la derniere colonne interne et la premiere colonne externe
+  let edgeX = null;
+  if (outCols.size) {
+    const first = Math.min(...outCols);
+    edgeX = PAD + first * PITCH_X - (PITCH_X - NW) / 2 - 6;
+  } else if ((fab.roles || []).indexOf('transit') >= 0) {
+    edgeX = width - 6;
+  }
+  return { fab, nodes, byDn, edges: edgesAll, out, inc, width, height, laneY, laneH, laneRows, edgeX, outCols };
+}
+
+/* ── Point de deploiement (E1) : IPG, leaf(s), interface physique ───────── */
+function deployInfo(o) {
+  if (!o || (o.n.kind !== 'staticPath' && o.n.kind !== 'l3outPath')) return null;
+  const t = o.n.target || {};
+  const leaves = [], ports = [], seenL = new Set(), seenP = new Set();
+  let ipgDn = null, ipgName = t.ipg || null;
+  for (const e of (M.out.get(o.dn) || [])) {
+    const tg = M.byDn.get(e.to); if (!tg) continue;
+    // deux switch profiles peuvent decrire la MEME leaf : on ne la liste qu'une fois
+    const lk = tg.n.note || tg.n.label;
+    if (e.rel === 'vers-leaf' && !seenL.has(lk)) { seenL.add(lk); leaves.push(tg); }
+    const pk = tg.n.note || tg.n.label;   // le meme port decrit par deux profils = un seul port
+    if (e.rel === 'vers-port' && !seenP.has(pk)) { seenP.add(pk); ports.push(tg); }
+    if (e.rel === 'vers-ipg') { ipgDn = tg.dn; ipgName = tg.n.label; }
+  }
+  if (!ipgName) {  // repli : le nom de l'IPG est lisible dans le DN du port selector
+    for (const p of ports) {
+      const m = /acc(?:portgrp|bundle)-(.+?)-typ-range/.exec(p.dn);
+      if (m) { ipgName = m[1]; break; }
+    }
+  }
+  if (!ipgDn && ipgName) {
+    const c = M.nodes.find(x => x.n.kind === 'ipg' && x.n.label === ipgName);
+    if (c) ipgDn = c.dn;
+  }
+  return {
+    kind: t.kind || (o.n.kind === 'l3outPath' ? 'l3out' : 'access'),
+    pod: t.pod || null,
+    nodesTxt: (t.nodes && t.nodes.length ? t.nodes.join(' + ') : (leaves.map(l => (l.n.note || l.n.label)).join(' + ') || null)),
+    port: t.port || (ports[0] ? ports[0].n.note || ports[0].n.label : null),
+    ipgName, ipgDn, leaves, ports,
+    addr: (o.n.attrs || {}).addr || null,
+    encap: (o.n.attrs || {}).encap || null
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5 · Vue CARTE — le graphe est dessine UNE fois ; seule la loupe se deplace
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderGraph(intro) {
+  const host = $('#l-carte');
+  host.innerHTML = '';
+  if (!M.nodes.length) {
+    const d = document.createElement('div');
+    d.className = 'empty';
+    d.innerHTML = '<div>Aucune correspondance dans <span class="mono">' + esc(M.fab.id) + '</span><br>' +
+      '<span style="font-size:10.5px">' + esc(M.fab.summary || '') + '</span></div>';
+    host.appendChild(d); return null;
+  }
+  const svg = el('svg', { viewBox: '0 0 ' + M.width + ' ' + M.height, preserveAspectRatio: 'xMidYMid meet' });
+  if (intro) svg.classList.add('intro');
+
+  for (let l = 0; l < 2; l++) {
+    if (!M.laneRows[l]) continue;
+    svg.appendChild(el('rect', { class: 'lane-band', x: 6, y: M.laneY[l] - 14, rx: 10, width: M.width - 12, height: M.laneH[l] + 20 }));
+    svg.appendChild(svgText('lane-name', 16, M.laneY[l] - 20, LANE_NAME[l]));
+  }
+
+  // limite du fabric : ce qui est a droite du filet N'EST PLUS dans le fabric
+  if (M.edgeX != null) {
+    svg.appendChild(el('rect', { class: 'outband', x: M.edgeX, y: 2, width: Math.max(0, M.width - M.edgeX), height: M.height - 4, rx: 8 }));
+    svg.appendChild(el('line', { class: 'fabric-edge', x1: M.edgeX, y1: 4, x2: M.edgeX, y2: M.height - 4 }));
+    svg.appendChild(svgText('fabric-edge-lbl', M.edgeX + 9, 15, 'hors fabric →'));
+    // repetee a la verticale : la loupe peut cadrer n'importe quelle bande de hauteur
+    const vt = svgText('fabric-edge-lbl', 0, 0, 'limite du fabric', {
+      transform: 'translate(' + (M.edgeX - 6) + ',' + (M.height / 2) + ') rotate(-90)', 'text-anchor': 'middle'
+    });
+    svg.appendChild(vt);
+  }
+
+  const gE = el('g', {}), gL = el('g', {}), gN = el('g', {});
+  svg.append(gE, gL, gN);
+
+  const lblSlot = new Map();
+  M.edges.forEach((e, i) => {
+    const a = M.byDn.get(e.from), b = M.byDn.get(e.to);
+    const x1 = a.x + a.w, y1 = a.cy, x2 = b.x, y2 = b.cy;
+    let d;
+    if (x2 - x1 > 12) {
+      const m = (x2 - x1) * .5;
+      d = 'M' + x1 + ' ' + y1 + ' C' + (x1 + m) + ' ' + y1 + ' ' + (x2 - m) + ' ' + y2 + ' ' + x2 + ' ' + y2;
+    } else {
+      const s = (y2 > y1 ? 1 : -1) * 34;
+      d = 'M' + x1 + ' ' + y1 + ' C' + (x1 + 60) + ' ' + (y1 + s) + ' ' + (x2 - 60) + ' ' + (y2 - s) + ' ' + a.x + ' ' + y2;
+      if (x2 < a.x) d = 'M' + a.x + ' ' + y1 + ' C' + (a.x - 70) + ' ' + (y1 + s) + ' ' + (b.x + b.w + 70) + ' ' + (y2 - s) + ' ' + (b.x + b.w) + ' ' + y2;
+    }
+    const cross = a.lane !== b.lane, exit = b.outside && !a.outside;
+    const p = el('path', { class: 'edge' + (cross ? ' cross' : '') + (exit ? ' exit' : ''), d: d, 'data-i': i });
+    if (intro) {
+      const len = Math.hypot(x2 - x1, y2 - y1) * 1.6 + 40;
+      p.style.setProperty('--len', len);
+      p.style.strokeDasharray = cross ? '3 3' : len;
+      p.style.animationDelay = (a.col * 55 + 120) + 'ms';
+    }
+    e._el = p; gE.appendChild(p);
+    // etiquette posee a l'ARRIVEE : chaque relation a une place unique. On empile les
+    // etiquettes qui aboutissent au meme objet du meme cote, sinon elles se superposent.
+    const gap = b.x - (a.x + a.w), side = gap >= 60 ? 'r' : 't';
+    const key = e.to + '|' + side, rank = lblSlot.get(key) || 0;
+    lblSlot.set(key, rank + 1);
+    const dy = rank * 9;
+    const lb = side === 'r'
+      ? svgText('edge-lbl', b.x - 5, b.cy - 6 - dy, trunc(e.label || e.rel, 24), { 'text-anchor': 'end' })
+      : svgText('edge-lbl', b.x + 1, b.y - 5 - dy, trunc(e.label || e.rel, 24));
+    e._lbl = lb; gL.appendChild(lb);
+  });
+
+  for (const o of M.nodes) {
+    const g = el('g', {
+      class: 'node' + (o.ghost ? ' ghost' : ''), tabindex: -1, role: 'button',
+      'data-dn': o.dn, 'data-target': o.target ? 1 : 0, 'data-warn': o.warn ? 1 : 0, 'data-out': o.outside ? 1 : 0
+    });
+    if (intro) g.style.animationDelay = (o.col * 55) + 'ms';
+    g.appendChild(el('rect', { class: 'box', x: o.x, y: o.y, width: o.w, height: o.h, rx: 6 }));
+    g.appendChild(el('circle', { class: 'tgt', cx: o.x + 7, cy: o.y + 7, r: 2.6 }));
+    g.appendChild(svgText('kick', o.x + (o.target ? 14 : 9), o.y + (o.ghost ? 9.5 : 11), trunc((o.n.clsLabel || o.n.cls || '').toUpperCase(), 22)));
+    g.appendChild(svgText('name mono', o.x + 9, o.y + (o.ghost ? 20 : 23), trunc(o.n.label, o.ghost ? 19 : 20)));
+    // E1 : la ligne « leaf · port · IPG » est ecrite SUR l'objet de deploiement.
+    //      On passe par deployInfo() et pas par n.target brut : dans la plupart
+    //      des backups target.ipg est null, l'IPG n'etant lisible que dans le DN
+    //      du port selector. Sans ce repli, l'IPG n'apparaissait jamais.
+    const dep = deployInfo(o);
+    if (dep) {
+      // le libelle de l'objet porte deja « leaf 101 . eth1/1 » : la sous-ligne
+      // sert donc a l'IPG, la seule piece qui manquait a l'ecran.
+      g.appendChild(svgText('sub mono', o.x + 9, o.y + 32,
+        trunc(dep.ipgName ? 'IPG ' + dep.ipgName : 'port en accès direct', 27)));
+      const bits = [];
+      if (dep.nodesTxt) bits.push((dep.kind === 'vpc' ? 'vPC ' : 'leaf ') + dep.nodesTxt);
+      if (dep.port) bits.push(dep.port);
+      bits.push(dep.ipgName ? 'IPG ' + dep.ipgName : 'sans IPG');
+      if (dep.pod) bits.push('pod ' + dep.pod);
+      o._depTxt = bits.join(' · ');
+    }
+    if (o.warn) g.appendChild(svgText('warn', o.x + 9, o.y - 4, '⚠ DOUBLE DÉPLOIEMENT'));
+    const ti = el('title');
+    ti.textContent = o.n.label + (o._depTxt ? '\nPoint de déploiement · ' + o._depTxt : '') + '\n' + o.dn;
+    g.appendChild(ti);
+    if (o.n.note) g.appendChild(svgText('note mono', o.x + 9, o.y + o.h + 9, trunc(o.n.note, 32)));
+    g.addEventListener('click', () => select(o.dn));
+    o._el = g; gN.appendChild(g);
+  }
+  host.appendChild(svg);
+  return svg;
+}
+
+function setVB(t, dur) {
+  const svg = $('#l-carte svg'); if (!svg) return;
+  if (anim) cancelAnimationFrame(anim);
+  const from = vb || t;
+  if (!dur) { vb = t; svg.setAttribute('viewBox', t.join(' ')); return; }
+  const t0 = performance.now();
+  const step = now => {
+    const p = Math.min(1, (now - t0) / dur);
+    const e = p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+    vb = from.map((v, i) => v + (t[i] - v) * e);
+    svg.setAttribute('viewBox', vb.map(v => v.toFixed(1)).join(' '));
+    if (p < 1) anim = requestAnimationFrame(step);
+  };
+  anim = requestAnimationFrame(step);
+}
+const overviewVB = () => [0, 0, M.width, M.height];
+function loupeVB(o) {
+  const c = $('#center');
+  let ar = c.clientHeight / Math.max(1, c.clientWidth);
+  if (!isFinite(ar) || ar <= 0.02) ar = 0.55;
+  let w = Math.min(M.width, PITCH_X * 5.2), h = w * ar;
+  if (h > M.height) { h = M.height; w = Math.min(M.width, h / ar); }
+  let x = o.x + o.w / 2 - w / 2, y = o.cy - h / 2;
+  x = Math.max(-10, Math.min(M.width - w + 10, x));
+  y = Math.max(-10, Math.min(M.height - h + 10, y));
+  return [x, y, w, h];
+}
+function applyZoom(dur) {
+  if (!M || !M.nodes.length) return;
+  const o = M.byDn.get(sel);
+  setVB(zmode === 'over' || !o ? overviewVB() : loupeVB(o), dur);
+  renderTools();
+}
+function focusPaint() {
+  if (!M) return;
+  const near = new Set([sel]);
+  for (const e of M.edges) { if (e.from === sel) near.add(e.to); if (e.to === sel) near.add(e.from); }
+  for (const o of M.nodes) {
+    if (!o._el) continue;
+    const is = o.dn === sel;
+    o._el.classList.toggle('sel', is);
+    o._el.classList.toggle('near', !is && near.has(o.dn));
+    o._el.classList.toggle('dim', !near.has(o.dn));
+  }
+  for (const e of M.edges) {
+    if (!e._el) continue;
+    const hot = e.from === sel || e.to === sel;
+    e._el.classList.toggle('hot', hot);
+    e._el.classList.toggle('dim', !hot);
+    e._lbl.classList.toggle('on', hot);
+  }
+  for (const r of document.querySelectorAll('.row')) {
+    const cur = r.dataset.dn === sel && !!sel;
+    r.setAttribute('aria-current', cur ? 'true' : 'false');
+    r.dataset.near = (!cur && near.has(r.dataset.dn)) ? 1 : 0;
+  }
+  const cur = document.querySelector('.row[aria-current="true"]');
+  if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+  if (ORB) paintOrbit();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6 · Vue ORBITALE — la position PORTE le sens
+       subnet : gauche = ANNONCE (export-rtctrl) · droite = CLASSIFIE (import-security)
+       vlan   : gauche = TRANSIT (sort du fabric) · droite = CLIENT (finit sur un EPG)
+       sommet = les deux · gouttiere du bas = aucune correspondance
+   ═══════════════════════════════════════════════════════════════════════════ */
+const OW = 1000, OH = 700, CX = 500, CY = 372, RX = 352, RY = 236, ARC_MAX = 40;
+
+function orbitModel() {
+  const isSub = DATA.query.type === 'subnet';
+  const rows = (DATA.fabrics || []).map((f, i) => {
+    const hits = f.hits || [], nodes = f.nodes || {};
+    let nRoute = 0, nSec = 0, exact = false, warn = false;
+    if (isSub) {
+      hits.forEach(h => {
+        if (h.match === 'exact') { exact = true; nRoute++; }
+        if (h.routage) nRoute++;
+        if (h.securite) nSec++;
+      });
+    } else {
+      const roles = f.roles || [];
+      nRoute = roles.indexOf('transit') >= 0 ? 1 : 0;
+      nSec = roles.indexOf('client') >= 0 ? 1 : 0;
+      exact = f.status === 'deployed';
+    }
+    for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
+    const present = f.status !== 'absent' && (hits.length > 0 || Object.keys(nodes).length > 0);
+    return {
+      i, f, nRoute, nSec, exact, warn, present, isSub,
+      nObj: Object.keys(nodes).length,
+      protocols: f.protocols || [],
+      score: (nSec - nRoute) / ((nSec + nRoute) || 1)
+    };
+  });
+  const orbit = rows.filter(m => m.present), gutter = rows.filter(m => !m.present);
+  // layout : score -1 -> 180° (gauche) · +1 -> 0° (droite) · 0 -> 90° (sommet)
+  const sorted = orbit.slice().sort((a, b) => a.score - b.score || a.f.id.localeCompare(b.f.id));
+  const groups = new Map();
+  sorted.forEach(m => { const k = m.score.toFixed(2); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(m); });
+  const dense = orbit.length > 9;
+  let ai = 0;
+  groups.forEach((g, k) => {
+    const base = 180 - ((+k + 1) / 2) * 180;
+    const step = Math.min(dense ? 26 : 46, g.length > 1 ? 140 / (g.length - 1) : 46);
+    g.forEach((m, j) => {
+      const ang = (base + ((g.length - 1) / 2 - j) * step) * Math.PI / 180;
+      const kk = (dense && ai % 2 === 1) ? .58 : 1;
+      m.pos = { x: CX + RX * kk * Math.cos(ang), y: CY - RY * kk * Math.sin(ang) };
+      ai++;
+    });
+  });
+  // gouttiere : on enroule sur plusieurs rangees, sinon au-dela de 4 fabrics
+  // sans correspondance les capsules sortaient du cadre par la droite.
+  const per = Math.max(1, Math.floor((OW - 120) / 210));
+  gutter.forEach((m, j) => {
+    const row = Math.floor(j / per), c = j % per;
+    const n = Math.min(per, gutter.length - row * per);
+    m.pos = { x: CX + (c - (n - 1) / 2) * 210, y: OH - 62 + row * 40 };
+  });
+  const paths = [];
+  if (isSub) {
+    orbit.filter(a => a.nRoute > 0).forEach(a =>
+      orbit.filter(b => b.nSec > 0 && b.f.id !== a.f.id).forEach(b =>
+        paths.push({ from: a, to: b, kind: b.exact ? 'exact' : 'approx' })));
+  } else {
+    orbit.forEach(a => paths.push({ from: null, to: a, kind: a.nRoute ? 'transit' : 'client' }));
+  }
+  return { rows, orbit, gutter, paths, dense, isSub };
+}
+
+function arcPath(a, b) {
+  const bow = (p, q, k) => {
+    const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+    const dx = q.x - p.x, dy = q.y - p.y, L = Math.hypot(dx, dy) || 1;
+    return { x: mx + (-dy / L) * k, y: my + (dx / L) * k };
+  };
+  const c = { x: CX, y: CY };
+  const q1 = bow(a, c, 30), q2 = bow(c, b, 30);
+  return 'M ' + a.x + ' ' + a.y + ' Q ' + q1.x + ' ' + q1.y + ' ' + c.x + ' ' + c.y +
+         ' Q ' + q2.x + ' ' + q2.y + ' ' + b.x + ' ' + b.y;
+}
+
+function renderOrbit(animate) {
+  ORB = orbitModel();
+  const host = $('#l-orbit'); host.innerHTML = '';
+  const svg = el('svg', { viewBox: '0 0 ' + OW + ' ' + OH, preserveAspectRatio: 'xMidYMid meet' });
+  if (animate) svg.classList.add('orb-in');
+  const isSub = ORB.isSub;
+
+  svg.appendChild(el('line', { class: 'orb-axis', x1: 40, y1: CY, x2: OW - 40, y2: CY }));
+  svg.appendChild(el('ellipse', { class: 'orb-guide', cx: CX, cy: CY, rx: RX, ry: RY }));
+  if (ORB.dense) svg.appendChild(el('ellipse', { class: 'orb-guide', cx: CX, cy: CY, rx: RX * .58, ry: RY * .58 }));
+  svg.appendChild(svgText('orb-axis-lbl', CX - 80, CY - 6, isSub ? '← annonce · export-rtctrl' : '← transit · sort du fabric', { 'text-anchor': 'end' }));
+  svg.appendChild(svgText('orb-axis-lbl', CX + 80, CY - 6, isSub ? 'classifie · import-security →' : 'client · finit sur un EPG →'));
+  svg.appendChild(svgText('orb-axis-lbl', CX, 22, '↑ ' + (isSub ? 'les deux axes' : 'client + transit'), { 'text-anchor': 'middle' }));
+
+  const gA = el('g', {}), gC = el('g', {});
+  svg.append(gA, gC);
+  const quiet = ORB.paths.length > ARC_MAX;
+  ORB.arcEls = [];
+  ORB.paths.forEach(p => {
+    const from = p.from ? p.from.pos : { x: CX, y: CY };
+    const path = el('path', { class: 'arc ' + (p.from ? p.kind : 'spoke-' + p.kind) + (quiet ? ' quiet' : ''), d: arcPath(from, p.to.pos) });
+    const ti = el('title');
+    ti.textContent = p.from
+      ? p.from.f.id + ' annonce ' + DATA.query.value + ' · ' + p.to.f.id + ' le classifie' + (p.kind === 'approx' ? ' (par agrégat)' : '')
+      : p.to.f.id + ' · ' + (p.kind === 'transit' ? 'VLAN de transit, il sort du fabric' : 'VLAN client, il finit sur un EPG');
+    path.appendChild(ti);
+    gA.appendChild(path);
+    ORB.arcEls.push({ el: path, p });
+  });
+  ORB.gutter.forEach(m => {
+    const path = el('path', { class: 'arc broken', d: arcPath({ x: CX, y: CY }, m.pos) });
+    gA.appendChild(path); ORB.arcEls.push({ el: path, p: { from: null, to: m, kind: 'broken' } });
+  });
+
+  // noyau : le SUJET de l'orbite est TOUJOURS un prefixe (niveau 3)
+  const core = el('g', { class: 'core' });
+  core.appendChild(el('circle', { class: 'orb-core-bg', cx: CX, cy: CY, r: 62 }));
+  core.appendChild(el('circle', { class: 'orb-core-ring', cx: CX, cy: CY, r: 62 }));
+  core.appendChild(svgText('orb-core-l3', CX, CY - 26, isSub ? 'niveau 3 · préfixe' : 'niveau 2'));
+  core.appendChild(svgText('orb-core-v mono', CX, CY + 4, String(DATA.query.value)));
+  core.appendChild(svgText('orb-core-m', CX, CY + 24,
+    isSub ? ORB.orbit.length + ' fabrics · ' + ORB.paths.length + ' chemins'
+          : ORB.orbit.length + ' fabrics · ' + ORB.orbit.filter(m => m.nRoute).length + ' transit'));
+  svg.appendChild(core);
+  const vk = vlanCarrying(DSKEY);
+  if (vk) svg.appendChild(svgText('orb-core-src', CX, CY + 86,
+    'porté dans les fabriques par le VLAN ' + valueOf(vk), { 'text-anchor': 'middle' }));
+
+  if (ORB.gutter.length) svg.appendChild(svgText('gutter-lbl', 60, OH - 96, 'hors orbite · aucune correspondance dans le backup'));
+
+  const CW = ORB.dense ? 138 : 168, CH = ORB.dense ? 34 : 50;
+  ORB.capEls = new Map();
+  ORB.rows.forEach(m => {
+    const g = el('g', {
+      class: 'cap', tabindex: '0', role: 'button', 'data-fab': m.i,
+      'data-absent': m.present ? 0 : 1,
+      'aria-label': m.f.id + ' — ' + (m.f.summary || '') + ' — activer pour ouvrir la carte de ce fabric'
+    });
+    const x = m.pos.x - CW / 2, y = m.pos.y - CH / 2;
+    g.appendChild(el('rect', { class: 'capbox', x: x, y: y, width: CW, height: CH, rx: 8 }));
+    g.appendChild(svgText('capid mono', x + 10, y + (ORB.dense ? 21 : 19), trunc(m.f.id, ORB.dense ? 15 : 18)));
+    if (!ORB.dense) {
+      g.appendChild(svgText('capsub', x + 10, y + 32, trunc(m.f.summary || '', 30)));
+      const ax = [];
+      if (m.nRoute) ax.push({ t: (isSub ? '↗ annonce ×' + m.nRoute : '↗ transit' + (m.protocols.length ? ' ' + m.protocols.join('/') : '')), c: 'ax-route' });
+      if (m.nSec) ax.push({ t: (isSub ? '↘ classifie ×' + m.nSec : '↘ client'), c: 'ax-sec' });
+      let ox = x + 10;
+      ax.forEach(a => { const t = svgText('capax ' + a.c, ox, y + 44, a.t); g.appendChild(t); ox += a.t.length * 4.6 + 12; });
+      if (m.warn) g.appendChild(svgText('capwarn', x + CW - 8, y + 44, '⚠ double dépl.', { 'text-anchor': 'end' }));
+    } else if (m.warn) g.appendChild(svgText('capwarn', x + CW - 8, y + 21, '⚠', { 'text-anchor': 'end' }));
+    if (m.exact) g.appendChild(el('circle', { class: 'tgt', cx: x + CW - 9, cy: y + 9, r: 2.6, fill: 'var(--color-accent)' }));
+    const ti = el('title');
+    ti.textContent = m.f.id + ' · ' + (m.f.summary || '') + '\n' + ((m.f.backup && m.f.backup.file) || '');
+    g.appendChild(ti);
+    g.addEventListener('click', () => dropIntoCarte(m.i));
+    g.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); dropIntoCarte(m.i); } });
+    g.addEventListener('mouseenter', () => paintOrbit(m.i));
+    g.addEventListener('mouseleave', () => paintOrbit());
+    svg.appendChild(g);
+    ORB.capEls.set(m.i, g);
+  });
+  host.appendChild(svg);
+  paintOrbit();
+}
+
+function paintOrbit(hover) {
+  if (!ORB || !ORB.capEls) return;
+  const cur = hover != null ? hover : fabIdx;
+  ORB.capEls.forEach((g, i) => g.setAttribute('data-cur', i === cur ? 1 : 0));
+  const quiet = ORB.paths.length > ARC_MAX;
+  ORB.arcEls.forEach(a => {
+    const touch = (a.p.from && a.p.from.i === cur) || (a.p.to && a.p.to.i === cur);
+    a.el.classList.toggle('hot', touch);
+    a.el.classList.toggle('quiet', quiet && !touch);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7 · Bascule entre les deux vues — instantanee, sans perte de contexte
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* E5(a) — l'orbitale ne prend JAMAIS un VLAN pour sujet. Si le jeu de donnees
+   courant est un VLAN, on bascule sur le SUBNET que ce VLAN porte : l'orbitale
+   est une question de niveau 3. Retourne true si une bascule a eu lieu — dans ce
+   cas loadDataset() a deja tout re-rendu et l'appelant doit s'arreter. */
+function ensureL3Subject() {
+  if (!DATA || !DATA.query || DATA.query.type === 'subnet') return false;
+  const sk = subnetSubject(DSKEY);
+  if (!sk || sk === DSKEY) return false;   // pas de prefixe connu : on garde le repli VLAN
+  loadDataset(sk, { view: 'orbite', keepFabric: true });
+  return true;
+}
+
+function setView(v, opts) {
+  opts = opts || {};
+  clearError();   // le message ne suit pas d'un ecran a l'autre
+  if (!DATA) return;              // rien n'a pu etre resolu : on ne touche a rien
+  if (v === 'orbite' && ensureL3Subject()) return;
+  view = v;
+  $('#l-carte').hidden = v !== 'carte';
+  $('#l-orbit').hidden = v !== 'orbite';
+  document.querySelectorAll('input[name=view]').forEach(r => { r.checked = (r.value === v); });
+  if (v === 'orbite') renderOrbit(opts.animate !== false);
+  else { applyZoom(0); focusPaint(); }
+  renderSideMode();
+  renderTools();
+}
+
+/* E3 : depuis l'orbite, choisir un fabric fait tomber dans la carte.
+   La capsule choisie grandit vers le centre pendant que la carte apparait :
+   le mouvement dit « je descends dans ce fabric », ce n'est pas un saut. */
+/* Le cartouche de plongee : il nomme la fabrique dans laquelle on tombe.
+   Il n'est jamais dans le flux : purement decoratif, pointer-events none. */
+function playDive(label) {
+  const d = $('#dive');
+  if (!d) return;
+  d.hidden = false;
+  d.innerHTML = '<span class="ring"></span><span class="ring"></span><span class="ring"></span>' +
+    '<span class="lbl"><span class="k">on entre dans</span>' +
+    '<span class="v mono">' + esc(label) + '</span></span>';
+  clearTimeout(playDive._t);
+  playDive._t = setTimeout(() => { d.hidden = true; d.innerHTML = ''; }, 760);
+}
+
+function dropIntoCarte(i) {
+  if (!DATA) return;              // pas de jeu de donnees : aucune plongee possible
+  const cap = ORB && ORB.capEls ? ORB.capEls.get(i) : null;
+  const diving = view === 'orbite';
+  // On PLONGE : le graphe se redessine devant nous (intro), c'est le moment cle.
+  switchFabric(i, diving);
+  const lc = $('#l-carte'), lo = $('#l-orbit');
+  // Un aller-retour rapide O/O laissait courir le fondu sortant de riseToOrbit,
+  // dont le onfinish cachait la carte QUE L'ON VIENT DE RE-AFFICHER : scene vide.
+  // cancel() ne declenche pas onfinish, la callback morte ne s'execute donc plus.
+  if (lc.getAnimations) lc.getAnimations().forEach(a => a.cancel());
+  lc.style.opacity = '';
+  lc.hidden = false;
+  const stage = $('#stage');
+  if (cap && lo.animate && stage) {
+    const st = stage.getBoundingClientRect();
+    const cr = cap.getBoundingClientRect();
+    // La carte demarre a la taille et a la position de la capsule.
+    const sc = Math.max(0.04, cr.width / Math.max(1, st.width));
+    const x0 = cr.left - st.left;
+    const y0 = cr.top - st.top + (cr.height - st.height * sc) / 2;
+    // L'orbite explose autour du meme point : on la traverse.
+    const K = Math.max(1.5, st.width / Math.max(1, cr.width));
+    const ox = (cr.left - st.left + cr.width / 2).toFixed(1);
+    const oy = (cr.top - st.top + cr.height / 2).toFixed(1);
+    const DUR = 760, EASE = 'cubic-bezier(.34,.02,.2,1)';
+
+    lo.style.pointerEvents = 'none';
+    lo.style.transformOrigin = ox + 'px ' + oy + 'px';
+    // Le rangement de l'orbite ne doit PAS dependre du seul onfinish : si
+    // l'animation ne s'acheve jamais (onglet en arriere-plan, moteur qui ne
+    // compose pas), l'orbite resterait posee sur la carte. Le meme nettoyage
+    // est donc arme aussi par un minuteur, et ne s'applique que si l'on est
+    // toujours dans la carte.
+    const doneLo = () => {
+      if (view !== 'carte') return;
+      lo.hidden = true;
+      lo.style.transform = ''; lo.style.opacity = '';
+      lo.style.filter = ''; lo.style.transformOrigin = '';
+      lo.style.pointerEvents = '';
+      if (lo.getAnimations) lo.getAnimations().forEach(a => a.cancel());
+    };
+    lo.animate([{ transform: 'none', opacity: 1, filter: 'blur(0px)' },
+                { transform: 'scale(' + K.toFixed(2) + ')', opacity: 0, filter: 'blur(11px)' }],
+               { duration: DUR, easing: EASE, fill: 'forwards' })
+      .onfinish = doneLo;
+    clearTimeout(dropIntoCarte._t);
+    dropIntoCarte._t = setTimeout(doneLo, DUR + 140);
+
+    lc.style.transformOrigin = '0 0';
+    lc.animate([
+      { transform: 'translate(' + x0.toFixed(1) + 'px,' + y0.toFixed(1) + 'px) scale(' + sc.toFixed(4) + ')',
+        opacity: .14, filter: 'blur(9px)' },
+      // pleine opacite tot : c'est la CROISSANCE qu'on doit voir, pas l'arrivee
+      { opacity: 1, filter: 'blur(2px)', offset: .34 },
+      { transform: 'none', opacity: 1, filter: 'blur(0px)' }
+    ], { duration: DUR, easing: EASE })
+      .onfinish = () => { lc.style.transform = ''; lc.style.filter = ''; lc.style.transformOrigin = ''; };
+  } else { lo.hidden = true; }
+  view = 'carte';
+  document.querySelectorAll('input[name=view]').forEach(r => { r.checked = (r.value === 'carte'); });
+  if (diving) playDive(((DATA.fabrics || [])[i] || {}).id || '');
+  // hors plongee (on etait deja dans la carte), pas d'intro : on recadre, point.
+  if (!diving) { zmode = 'loupe'; applyZoom(420); }
+  renderSideMode();
+  renderTools();
+}
+
+/* Retour a l'orbite : le mouvement inverse, la carte se resorbe vers la capsule. */
+function riseToOrbit() {
+  if (!DATA) return;
+  if (ensureL3Subject()) return;   // E5(a) : on remonte toujours sur un prefixe
+  renderOrbit(false);
+  const lo = $('#l-orbit'), lc = $('#l-carte');
+  // symetrique de dropIntoCarte : on tue l'explosion sortante encore en vol,
+  // dont le onfinish remettrait lo.hidden = true derriere nous.
+  if (lo.getAnimations) lo.getAnimations().forEach(a => a.cancel());
+  lo.style.transform = ''; lo.style.opacity = ''; lo.style.filter = '';
+  lo.style.transformOrigin = ''; lo.style.pointerEvents = '';
+  lo.hidden = false;
+  const cap = ORB.capEls.get(fabIdx);
+  if (cap && lo.animate) {
+    const r = cap.getBoundingClientRect(), c = $('#center').getBoundingClientRect();
+    const dx = (c.left + c.width / 2) - (r.left + r.width / 2);
+    const dy = (c.top + c.height / 2) - (r.top + r.height / 2);
+    lo.animate([{ transform: 'translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px) scale(2.6)', opacity: 0, filter: 'blur(8px)' },
+                { transform: 'none', opacity: 1, filter: 'blur(0px)' }],
+               { duration: 330, easing: 'cubic-bezier(.22,.61,.36,1)' });
+    const doneLc = () => { if (view !== 'orbite') return; lc.hidden = true; lc.style.opacity = ''; };
+    lc.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-out' })
+      .onfinish = doneLc;
+    clearTimeout(riseToOrbit._t);
+    riseToOrbit._t = setTimeout(doneLc, 360);   // filet : voir dropIntoCarte
+  } else lc.hidden = true;
+  view = 'orbite';
+  document.querySelectorAll('input[name=view]').forEach(r => { r.checked = (r.value === 'orbite'); });
+  renderSideMode();
+  renderTools();
+}
+
+function renderTools() {
+  const t = $('#tools');
+  t.innerHTML = '';
+  if (!DATA) return;
+  const mk = (id, cls, txt, title) => {
+    const b = document.createElement('button');
+    b.className = 'btn ' + cls; b.type = 'button'; b.id = id; b.innerHTML = txt; if (title) b.title = title;
+    t.appendChild(b); return b;
+  };
+  const curFab = (DATA.fabrics || [])[fabIdx] || {};
+  if (view === 'carte') {
+    mk('t-over', zmode === 'over' ? 'btn-primary' : 'btn-secondary', 'Vue d’ensemble').onclick = () => { zmode = 'over'; applyZoom(440); };
+    mk('t-loupe', zmode === 'loupe' ? 'btn-primary' : 'btn-secondary', 'Loupe').onclick = () => { zmode = 'loupe'; applyZoom(440); };
+    mk('t-orb', 'btn-primary', '◂ Remonter à l’orbitale <kbd>O</kbd>',
+       'Sortir de la fabrique. C’est le seul moyen d’en changer.').onclick = riseToOrbit;
+  } else {
+    mk('t-carte', 'btn-primary', 'Plonger dans <span class="mono">' + esc(curFab.id || '—') + '</span> ▸ <kbd>O</kbd>',
+       'Entrer à l’intérieur de cette fabrique').onclick = () => dropIntoCarte(fabIdx);
+  }
+}
+
+/* ── E5(b) · la CARTE est MONO-FABRIC ────────────────────────────────────
+   Dans la carte, la barre laterale ne propose AUCUN choix de fabrique : elle
+   dit seulement dans laquelle on se trouve, et par ou l'on sort. La liste des
+   fabriques n'existe que dehors, dans l'orbitale. */
+function renderSideMode() {
+  if (!DATA) return;
+  const carte = view === 'carte';
+  $('#fabs-h').hidden = carte;
+  $('#fabs').hidden = carte;
+  $('#fabcur').hidden = !carte;
+  if (carte) renderFabCur(); else renderFabs();
+}
+
+function renderFabCur() {
+  const f = (DATA.fabrics || [])[fabIdx] || {};
+  const box = $('#fabcur'); box.innerHTML = '';
+  let warn = false;
+  const nodes = f.nodes || {};
+  for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
+  const d = document.createElement('div');
+  d.className = 'fabcur-in';
+  d.innerHTML = '<div class="fabcur-k">Vous êtes dans</div>' +
+    '<div class="fabcur-id mono">' + esc(f.id || '—') + '</div>' +
+    '<div class="fabcur-s">' + esc(f.summary || '') + '</div>' +
+    (warn ? '<div class="fabcur-w">⚠ EPG en double déploiement</div>' : '');
+  box.appendChild(d);
+  const b = document.createElement('button');
+  b.className = 'btn btn-secondary btn-block'; b.type = 'button';
+  b.innerHTML = '◂ Remonter à l’orbitale <kbd>O</kbd>';
+  b.title = 'La carte ne montre qu’une fabrique. Pour en changer, il faut ressortir.';
+  b.onclick = riseToOrbit;
+  box.appendChild(b);
+  const others = Math.max(0, (DATA.fabrics || []).length - 1);
+  const n = document.createElement('div');
+  n.className = 'fabcur-n';
+  n.textContent = others
+    ? 'carte mono-fabrique · les ' + others + ' autres fabriques ne se voient que depuis l’orbitale'
+    : 'carte mono-fabrique';
+  box.appendChild(n);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8 · Barre laterale partagee — fabrics + arbre du path complet
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderFabs() {
+  const box = $('#fabs'); box.innerHTML = '';
+  const list = DATA.fabrics || [];
+  $('#fab-n').textContent = list.filter(f => f.status !== 'absent').length + '/' + list.length;
+  list.forEach((f, i) => {
+    const b = document.createElement('button');
+    b.className = 'fab'; b.type = 'button';
+    b.setAttribute('aria-current', i === fabIdx ? 'true' : 'false');
+    b.dataset.hit = f.status !== 'absent' ? 1 : 0;
+    b.dataset.absent = f.status === 'absent' ? 1 : 0;
+    let warn = false;
+    const nodes = f.nodes || {};
+    for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
+    const roles = (f.roles || []).join('+') || (f.hits && f.hits.length ? f.hits.length + ' corresp.' : '');
+    b.innerHTML = '<span class="st"></span><span class="id mono">' + esc(f.id) + '</span>' +
+      (warn ? '<span class="wr" title="EPG en double déploiement">⚠</span>' : '') +
+      '<span class="rl">' + esc(roles) + '</span>';
+    b.title = f.id + ' · ' + (f.summary || '') + '\n' + ((f.backup && f.backup.file) || '') +
+      '\n(double-clic : plonger dans cette fabrique)';
+    // liste visible seulement dans l'orbitale (E5b) : un clic vise, un double-clic plonge
+    b.onclick = () => { fabIdx = i; renderAll(false); paintOrbit(); };
+    b.ondblclick = () => dropIntoCarte(i);
+    box.appendChild(b);
+  });
+}
+
+/* Arbre : DFS par chaine + une section DEPLOIEMENT PHYSIQUE synthetisee (E1). */
+function buildTree() {
+  const secs = [];
+  if (!M || !M.nodes.length) return secs;
+  const seen = new Set(), rows = [];
+  const walk = (dn, depth, lane) => {
+    if (seen.has(dn)) return;
+    seen.add(dn); rows.push({ dn: dn, depth: depth, lane: lane });
+    for (const e of (M.out.get(dn) || [])) {
+      const t = M.byDn.get(e.to);
+      if (t && t.lane === lane) walk(e.to, depth + 1, lane);
+    }
+  };
+  const take = fn => { const s = rows.length; fn(); return rows.slice(s); };
+  const a = take(() => {
+    for (const r of (M.fab.roots || [])) if (M.byDn.has(r)) walk(r, 0, 0);
+    for (const o of M.nodes) if (o.lane === 0 && !seen.has(o.dn) && !(M.inc.get(o.dn) || []).length) walk(o.dn, 0, 0);
+    for (const o of M.nodes) if (o.lane === 0 && !seen.has(o.dn)) walk(o.dn, 0, 0);
+  });
+  const b = take(() => {
+    for (const o of M.nodes) if (o.lane === 1 && (o.n.kind === 'epg' || o.n.kind === 'l3out') && !seen.has(o.dn)) walk(o.dn, 0, 1);
+    for (const o of M.nodes) if (o.lane === 1 && !seen.has(o.dn) && !(M.inc.get(o.dn) || []).length) walk(o.dn, 0, 1);
+    for (const o of M.nodes) if (o.lane === 1 && !seen.has(o.dn)) walk(o.dn, 0, 1);
+  });
+  if (a.length) secs.push({ name: 'Access policies', rows: a });
+  if (b.length) secs.push({ name: (M.fab.roles || []).indexOf('transit') >= 0 ? 'Chaîne logique · L3Out' : 'Chaîne logique', rows: b });
+
+  const dep = [];
+  M.nodes.filter(o => o.n.kind === 'staticPath' || o.n.kind === 'l3outPath').forEach(o => {
+    const d = deployInfo(o); if (!d) return;
+    dep.push({ dn: o.dn, depth: 0 });
+    dep.push({ dn: d.ipgDn, depth: 1, fixed: 'IPG', text: d.ipgName || '— aucun IPG (port en accès direct)', dead: !d.ipgDn });
+    (d.leaves.length ? d.leaves : []).forEach(l => dep.push({ dn: l.dn, depth: 1, fixed: 'LEAF', text: l.n.note || l.n.label }));
+    if (!d.leaves.length && d.nodesTxt) dep.push({ dn: null, depth: 1, fixed: 'LEAF', text: d.nodesTxt, dead: true });
+    (d.ports.length ? d.ports : []).forEach(p => dep.push({ dn: p.dn, depth: 1, fixed: 'PORT', text: p.n.note || p.n.label }));
+    if (!d.ports.length && d.port) dep.push({ dn: null, depth: 1, fixed: 'PORT', text: d.port, dead: true });
+  });
+  if (dep.length) secs.push({ name: 'Déploiement physique', rows: dep, e1: true });
+  return secs;
+}
+
+function renderTree() {
+  const t = $('#tree'); t.innerHTML = ''; FLAT = [];
+  const secs = buildTree();
+  $('#tree-n').textContent = M ? M.nodes.length + ' objets' : '0';
+  $('#tree-title').textContent = M && M.fab ? 'Chemin complet · ' + M.fab.id : 'Chemin complet';
+  if (!secs.length) {
+    t.innerHTML = '<div class="text-muted" style="font-size:11px;padding:var(--space-3)">Aucun objet dans ce fabric pour cette recherche.</div>';
+    return;
+  }
+  secs.forEach(sec => {
+    const h = document.createElement('div');
+    h.className = 'sec-h';
+    h.innerHTML = '<span>' + esc(sec.name) + '</span><span class="n">' + sec.rows.length + '</span>';
+    t.appendChild(h);
+    sec.rows.forEach(r => {
+      const o = r.dn ? M.byDn.get(r.dn) : null;
+      const b = document.createElement('button');
+      b.className = 'row'; b.type = 'button';
+      b.dataset.dn = r.dn || '';
+      b.dataset.target = o && o.target ? 1 : 0;
+      b.dataset.ghost = o && o.ghost ? 1 : 0;
+      if (r.dead || !o) b.dataset.dead = 1;
+      b.style.paddingLeft = (4 + r.depth * 10) + 'px';
+      const lbl = r.text != null ? r.text : (o ? o.n.label : '—');
+      const cls = r.fixed || (o ? (o.n.clsLabel || o.n.cls) : '');
+      b.title = lbl + (o && o.n.note ? ' — ' + o.n.note : '') + (r.dn ? '\n' + r.dn : '');
+      b.innerHTML = '<span class="bul"></span><span class="lbl mono">' + esc(lbl) + '</span>' +
+                    '<span class="cls">' + esc(cls) + '</span>';
+      if (o) { b.onclick = () => select(r.dn); FLAT.push({ dn: r.dn, depth: r.depth, el: b }); }
+      t.appendChild(b);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9 · Panneau de detail (partage par les deux vues)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function kvRows(pairs) {
+  return pairs.filter(p => p).map(p =>
+    '<tr' + (p[2] ? ' class="hi"' : '') + '><td class="k">' + esc(p[0]) + '</td>' +
+    '<td class="v mono">' + esc(p[1]) + '</td></tr>').join('');
+}
+
+function renderPanel() {
+  const o = sel ? (M ? M.byDn.get(sel) : null) : null;
+  if (!o) return renderPanelFabric();
+  const n = o.n, at = n.attrs || {};
+  $('#p-kick').textContent = n.clsLabel || KIND_FR[n.kind] || '';
+  $('#p-name').textContent = n.label;
+  $('#p-cls').textContent = n.cls || '';
+  $('#p-note').textContent = n.note || '';
+  $('#p-dn').textContent = o.dn;
+  $('#p-attrs-h').textContent = 'Configuration brute · ' + Object.keys(at).length + ' attributs';
+  $('#p-nbrs-h').textContent = 'Voisins';
+
+  const q = DATA.query;
+  const ident = [
+    ['Classe ACI', n.cls || '—'],
+    ['Type', n.clsLabel || KIND_FR[n.kind] || n.kind],
+    ['Nom', n.label],
+    ['Fabric', M.fab.id],
+    n.note ? ['Rôle', n.note] : null,
+    ['Correspond à ' + (q.type === 'vlan' ? 'VLAN ' + q.value : q.value),
+      n.matchesQuery === false ? 'non — autre encapsulation' : (o.target ? 'oui' : '—'), o.target]
+  ];
+  if (o.hit) ident.push(['Correspondance', o.hit.match + (o.hit.role ? ' · ' + o.hit.role : ''), true]);
+  $('#p-ident').innerHTML = kvRows(ident);
+
+  const ks = Object.keys(at).sort();
+  const hot = new Set(['encap', 'addr', 'ip', 'scope', 'ifInstT', 'from', 'to', 'tDn']);
+  $('#p-attrs').innerHTML = ks.length
+    ? ks.map(k => '<tr' + (hot.has(k) ? ' class="hi"' : '') + '><td class="k mono">' + esc(k) + '</td>' +
+        '<td class="v mono">' + esc(at[k]) + '</td></tr>').join('')
+    : '<tr><td class="k">aucun attribut exporté dans ce backup</td></tr>';
+
+  const box = $('#p-nbrs'); box.innerHTML = '';
+
+  // E1 — point de deploiement, en tete des voisins, cliquable
+  const dep = deployInfo(o);
+  if (dep) {
+    const head = document.createElement('div');
+    head.className = 'pnote';
+    head.innerHTML = 'Point de déploiement · ' + esc(dep.kind === 'vpc' ? 'vPC' : dep.kind) +
+      (dep.pod ? ' · pod ' + esc(dep.pod) : '') + (dep.encap ? ' · <b>' + esc(dep.encap) + '</b>' : '') +
+      (dep.addr ? ' · <b>' + esc(dep.addr) + '</b>' : '');
+    box.appendChild(head);
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    const chip = (k, txt, dn) => {
+      const b = document.createElement(dn ? 'button' : 'span');
+      b.className = 'chip' + (dn ? '' : ' dead');
+      if (dn) { b.type = 'button'; b.onclick = () => select(dn); b.title = dn; }
+      b.innerHTML = '<span class="ck">' + esc(k) + '</span><span class="mono">' + esc(txt) + '</span>';
+      chips.appendChild(b);
+    };
+    chip('IPG', dep.ipgName || '—', dep.ipgDn);
+    if (dep.leaves.length) dep.leaves.forEach(l => chip('LEAF', l.n.note || l.n.label, l.dn));
+    else if (dep.nodesTxt) chip('LEAF', dep.nodesTxt, null);
+    if (dep.ports.length) dep.ports.forEach(p => chip('PORT', p.n.note || p.n.label, p.dn));
+    else if (dep.port) chip('PORT', dep.port, null);
+    box.appendChild(chips);
+  }
+  if (n.deployment) {
+    const d = n.deployment, p = document.createElement('div');
+    p.className = 'pnote';
+    p.innerHTML = 'Déploiement : <b>' + esc(d.mode) + '</b> · ' + (d.staticPaths || []).length + ' static path · ' +
+      (d.aaepDeploys || []).length + ' via AAEP';
+    box.appendChild(p);
+    if (d.conflict) {
+      const w = document.createElement('div');
+      w.className = 'chips';
+      w.innerHTML = '<span class="chip warn">⚠ double déploiement — static path ET AAEP sur le même EPG</span>';
+      box.appendChild(w);
+    }
+  }
+  if (n.roles && n.roles.length) {   // axes orthogonaux securite / routage
+    const c = document.createElement('div'); c.className = 'chips';
+    n.roles.forEach(r => {
+      const s = document.createElement('span');
+      s.className = 'chip on';
+      s.innerHTML = '<span class="ck">' + esc(r.axis === 'routage' ? '↗ routage' : '↘ sécurité') + '</span>' +
+        '<span class="mono">' + esc(r.scope) + '</span>';
+      s.title = (r.gui || '') + ' — ' + (r.sens || '');
+      c.appendChild(s);
+    });
+    box.appendChild(c);
+  }
+  if (n.protocols && n.protocols.length) {
+    const c = document.createElement('div'); c.className = 'chips';
+    c.innerHTML = n.protocols.map(p => '<span class="chip on"><span class="ck">peering</span><span class="mono">' + esc(p) + '</span></span>').join('');
+    box.appendChild(c);
+  }
+
+  const add = (e, dir) => {
+    const other = M.byDn.get(dir === 'out' ? e.to : e.from);
+    if (!other) return;
+    const b = document.createElement('button');
+    b.className = 'nbr'; b.type = 'button';
+    b.innerHTML = '<span class="rel">' + esc(e.label || e.rel) + '</span>' +
+      '<span class="arw">' + (dir === 'out' ? '→' : '←') + '</span>' +
+      '<span class="n mono">' + esc(other.n.label) + '</span>';
+    b.title = other.dn;
+    b.onclick = () => select(other.dn);
+    box.appendChild(b);
+  };
+  let nb = 0;
+  M.edges.forEach(e => { if (e.from === sel) { add(e, 'out'); nb++; } });
+  M.edges.forEach(e => { if (e.to === sel) { add(e, 'in'); nb++; } });
+  if (!nb && !dep) box.appendChild(Object.assign(document.createElement('div'),
+    { className: 'pnote', textContent: 'objet terminal — aucune relation dans ce backup' }));
+
+  renderPrefixBtn(o); renderVlanBtn();
+}
+
+function renderPanelFabric() {
+  if (!DATA) return;
+  const f = (DATA.fabrics || [])[fabIdx] || {};
+  $('#p-kick').textContent = 'Fabric';
+  $('#p-name').textContent = f.id || '—';
+  $('#p-cls').textContent = f.status || '';
+  $('#p-note').textContent = f.summary || '';
+  $('#p-dn').textContent = (f.backup && f.backup.file) || '—';
+  $('#p-attrs-h').textContent = 'Correspondances';
+  $('#p-nbrs-h').textContent = 'Actions';
+  $('#p-ident').innerHTML = kvRows([
+    ['Fabric', f.id || '—'],
+    ['Statut', f.status || '—'],
+    ['Rôles du VLAN', (f.roles || []).join(', ') || '—'],
+    ['Protocoles', (f.protocols || []).join(', ') || '—'],
+    ['Objets résolus', String(Object.keys(f.nodes || {}).length)],
+    ['Backup généré le', (f.backup && f.backup.generatedAt) ? f.backup.generatedAt.replace('T', ' ').replace('Z', ' UTC') : '—']
+  ]);
+  const hits = f.hits || [];
+  $('#p-attrs').innerHTML = hits.length
+    ? hits.map(h => '<tr><td class="k mono">' + esc(h.match + (h.role ? ' · ' + h.role : '')) + '</td>' +
+        '<td class="v mono">' + esc(h.dn) + '</td></tr>').join('')
+    : '<tr><td class="k">' + esc(f.summary || 'aucune correspondance') + '</td></tr>';
+  const box = $('#p-nbrs'); box.innerHTML = '';
+  hits.slice(0, 40).forEach(h => {
+    const b = document.createElement('button');
+    b.className = 'nbr'; b.type = 'button';
+    b.innerHTML = '<span class="rel">' + esc(h.match) + '</span><span class="arw">→</span>' +
+      '<span class="n mono">' + esc(h.dn.split('/').pop()) + '</span>';
+    b.title = h.dn;
+    b.onclick = () => { if (M && M.byDn.has(h.dn)) { if (view === 'orbite') dropIntoCarte(fabIdx); select(h.dn); } };
+    box.appendChild(b);
+  });
+  const b = document.createElement('button');
+  b.className = 'nbr'; b.type = 'button';
+  b.innerHTML = '<span class="rel">vue</span><span class="arw">→</span><span class="n">ouvrir la carte de ce fabric</span>';
+  b.onclick = () => dropIntoCarte(fabIdx);
+  box.appendChild(b);
+  renderPrefixBtn(null); renderVlanBtn();
+}
+
+/* E4 : depuis un objet porteur d'un prefixe, sauter en vue orbitale sur ce prefixe. */
+function prefixOf(o) {
+  if (!o) return null;
+  const at = o.n.attrs || {};
+  const cand = at.ip || at.addr || null;
+  if (!cand) return null;
+  const n = netKey(cand);
+  if (!n || /^0\.0\.0\.0\//.test(n)) return { prefix: cand, net: n, ds: null };
+  return { prefix: cand, net: n, ds: datasetForPrefix(cand) };
+}
+function renderPrefixBtn(o) {
+  const b = $('#btn-prefix');
+  const p = prefixOf(o);
+  if (!p) { b.hidden = true; b.onclick = null; return; }
+  b.hidden = false;
+  if (p.ds) {
+    b.className = 'btn btn-primary';
+    b.innerHTML = 'Où vit <span class="mono">' + esc(p.net) + '</span> ? <kbd>F</kbd>';
+    b.title = 'Basculer en vue orbitale sur ce préfixe (' + p.ds.hits + ' fabrics)';
+    b.disabled = false;
+    b.onclick = () => followPrefix();
+  } else {
+    b.className = 'btn btn-secondary';
+    b.innerHTML = 'Préfixe <span class="mono">' + esc(p.prefix) + '</span>';
+    b.title = p.net ? 'Aucun jeu de données hors ligne pour ce préfixe' : 'Préfixe non exploitable';
+    b.disabled = true; b.onclick = null;
+  }
+}
+function followPrefix() {
+  const o = sel && M ? M.byDn.get(sel) : null;
+  const p = prefixOf(o);
+  if (!p || !p.ds) return;
+  loadDataset(p.ds.key, { view: 'orbite', keepFabric: true });
+}
+
+/* E4 — l'autre sens. Depuis un sujet de niveau 3 (l'orbitale, ou la carte d'un
+   subnet), redescendre dans la carte du VLAN qui porte ce prefixe. La navigation
+   croisee existe donc dans les DEUX sens :
+     carte(objet porteur d'IP) ──F──▸ orbitale(prefixe)
+     prefixe ──V──▸ carte du VLAN qui le porte                                */
+function vlanKeyHere() { return (DATA && DATA.query && DATA.query.type === 'subnet') ? vlanCarrying(DSKEY) : null; }
+function renderVlanBtn() {
+  const b = $('#btn-vlan'), vk = vlanKeyHere();
+  if (!vk) { b.hidden = true; b.onclick = null; return; }
+  b.hidden = false;
+  b.className = 'btn btn-secondary';
+  b.innerHTML = 'Carte du VLAN <span class="mono">' + esc(valueOf(vk)) + '</span> <kbd>V</kbd>';
+  b.title = 'Le VLAN ' + valueOf(vk) + ' porte ce préfixe dans les fabriques — ouvrir sa carte';
+  b.onclick = followVlan;
+}
+function followVlan() {
+  const vk = vlanKeyHere();
+  if (vk) loadDataset(vk, { view: 'carte', keepFabric: true });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   10 · Selection et changement de fabric / de jeu de donnees
+   ═══════════════════════════════════════════════════════════════════════════ */
+function select(dn, push) {
+  if (!M || !M.byDn.has(dn) || dn === sel) return;
+  if (push !== false && sel) hist.push(sel);
+  sel = dn;
+  focusPaint(); renderPanel();
+  if (view === 'carte') applyZoom(zmode === 'loupe' ? 460 : 0);
+}
+
+/* correspondance d'un objet d'un fabric a l'autre : meme kind + meme label, sinon meme kind */
+function equivalent(prev) {
+  if (!prev || !M) return null;
+  let c = M.nodes.find(o => o.n.kind === prev.kind && o.n.label === prev.label);
+  if (!c) c = M.nodes.find(o => o.n.kind === prev.kind);
+  return c ? c.dn : null;
+}
+
+function switchFabric(i, intro) {
+  const f = (DATA.fabrics || [])[i];
+  if (!f) return;
+  const prev = (M && sel) ? (M.byDn.get(sel) || {}).n : null;
+  fabIdx = i;
+  if (introTimer) { clearTimeout(introTimer); introTimer = null; }
+  M = build(f);
+  hist = [];
+  renderSideMode(); renderTree();
+  $('#side-foot').innerHTML = 'Backup <span class="mono">' + esc((f.backup && f.backup.file) || '—') + '</span>';
+  $('#freshness').innerHTML = 'résolu le <span class="mono">' +
+    esc(((f.backup && f.backup.generatedAt) || '').replace('T', ' ').replace('Z', ' UTC')) + '</span>';
+  const svg = renderGraph(!!intro);
+  const root = (f.roots || []).find(r => M.byDn.has(r));
+  const firstHit = (f.hits || []).map(h => h.dn).find(dn => M.byDn.has(dn));
+  sel = equivalent(prev) || root || firstHit || (M.nodes[0] ? M.nodes[0].dn : null);
+  vb = null;
+  if (M.nodes.length) { zmode = intro ? 'over' : zmode; setVB(overviewVB(), 0); }
+  focusPaint(); renderPanel(); renderTools();
+  if (intro && svg) {
+    introTimer = setTimeout(() => {
+      introTimer = null;
+      svg.classList.remove('intro');
+      M.edges.forEach(e => { if (e._el) { e._el.style.strokeDasharray = ''; e._el.style.animationDelay = ''; } });
+      M.nodes.forEach(o => { if (o._el) o._el.style.animationDelay = ''; });
+      zmode = 'loupe'; applyZoom(560);
+    }, 1050);
+  } else if (M.nodes.length) applyZoom(0);
+}
+
+function renderAll(intro) {
+  if (!DATA || !DATA.query) return;
+  $('#qk').textContent = DATA.query.type === 'vlan' ? 'VLAN' : 'SUBNET';
+  $('#qv').textContent = DATA.query.value;
+  switchFabric(fabIdx, intro);
+}
+
+function loadDataset(key, opts) {
+  opts = opts || {};
+  let d = null;
+  try { d = ensureDataset(key); }
+  catch (e) {
+    showError('Le résolveur a échoué sur « ' + valueOf(key) + ' »',
+      String((e && e.message) || e) + ' — l’écran précédent est intact.');
+    return;
+  }
+  if (!d) { showError('Résolution impossible', 'Aucune donnée de fabrique chargée pour « ' + valueOf(key) + ' ».'); return; }
+  // le message precedent ne doit pas survivre a l'ecran qu'il commentait :
+  // sans ca, F / V / un clic de suggestion redessinaient DERRIERE l'overlay.
+  clearError();
+  const prevFabId = ((DATA && DATA.fabrics ? DATA.fabrics[fabIdx] : null) || {}).id;
+  DSKEY = key; DATA = d;
+  const same = (DATA.fabrics || []).findIndex(f => f.id === prevFabId);
+  fabIdx = opts.keepFabric && same >= 0 ? same : 0;
+  sel = null; hist = []; ORB = null;
+  $('#q').value = '';
+  renderAll(opts.intro === true);
+  setView(opts.view || view, { animate: true });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   11 · Recherche — n'importe quel VLAN, n'importe quel prefixe, n'importe
+        quelle adresse. Ce qui est tape est LU, valide, puis resolu.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Message d'erreur : jamais une page blanche ───────────────────────────
+   L'ecran courant reste affiche tel quel ; le message se pose PAR-DESSUS,
+   dit ce qui a ete cherche, pourquoi ca n'aboutit pas, et propose les entrees
+   les plus proches, cliquables. Rien n'est perdu, on ferme et on continue. */
+function clearError() { const e = $('#fl-err'); if (e) e.remove(); }
+// Un message d'erreur ne doit jamais survivre a l'ecran qui l'a produit.
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && $('#fl-err')) { clearError(); ev.stopPropagation(); }
+}, true);
+function showError(title, detail, sugg) {
+  clearError();
+  const d = document.createElement('div');
+  d.className = 'empty'; d.id = 'fl-err';
+  d.style.zIndex = '5';
+  d.style.background = 'color-mix(in srgb, var(--color-bg) 88%, transparent)';
+  const box = document.createElement('div');
+  box.style.maxWidth = '46em';
+  box.innerHTML = '<div style="color:var(--fl-warn)">' + esc(title) + '</div>' +
+    (detail ? '<div style="margin-top:6px">' + esc(detail) + '</div>' : '');
+  d.appendChild(box);
+  if (sugg && sugg.length) {
+    const p = document.createElement('div');
+    p.style.marginTop = '10px';
+    p.textContent = 'le plus proche dans les backups :';
+    box.appendChild(p);
+    const row = document.createElement('div');
+    row.className = 'chips';
+    row.style.justifyContent = 'center';
+    row.style.marginTop = '6px';
+    sugg.forEach(c => {
+      const b = document.createElement('button');
+      b.className = 'chip'; b.type = 'button';
+      b.innerHTML = '<span class="ck">' + esc(c.kindLabel) + '</span><span class="mono">' + esc(c.value) + '</span>';
+      // passer par runQuery et non loadDataset : loadDataset court-circuite
+      // le controle d'existence, et une suggestion sans correspondance
+      // donnait un ecran vide, sans message.
+      b.onclick = () => { clearError(); runQuery(c.type === 'vlan' ? String(c.vlan != null ? c.vlan : c.label) : c.label); };
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+  }
+  const cl = document.createElement('button');
+  cl.className = 'btn btn-secondary'; cl.type = 'button';
+  cl.textContent = 'Fermer'; cl.style.marginTop = '10px';
+  cl.onclick = clearError;
+  box.appendChild(cl);
+  $('#center').appendChild(d);
+}
+
+/* Les « plus proches » sortent de l'index, donc des donnees. */
+function nearestVlan(n, k) {
+  return CATALOG.filter(c => c.type === 'vlan')
+    .map(c => ({ c: c, d: Math.abs(+c.value - n) }))
+    .sort((a, b) => a.d - b.d || (+a.c.value) - (+b.c.value))
+    .slice(0, k).map(x => x.c);
+}
+function nearestNet(net, k) {
+  const list = [];
+  PFX_IX.forEach(e => {
+    if (e.net.version !== net.version) return;
+    const a = e.net.addr, b = net.addr;
+    list.push({ c: e.cat, d: a > b ? a - b : b - a });
+  });
+  list.sort((x, y) => (x.d < y.d ? -1 : x.d > y.d ? 1 : 0));
+  return list.slice(0, k).map(x => x.c);
+}
+
+/* ── Lecture de la requete ────────────────────────────────────────────────
+   Accepte « 100 », « vlan 100 », « vlan-100 », « 10.1.1.0/24 », « 10.1.1.42 ».
+   Renvoie soit une requete exploitable, soit une erreur DEJA redigee : chaque
+   forme fautive a son propre message, il n'y a pas de « requete invalide »
+   generique. Une adresse seule remonte au prefixe LE PLUS SPECIFIQUE qui la
+   contient — c'est la question que se pose quelqu'un qui tient une IP. */
+function parseQuery(text) {
+  // sans resolveur il n'y a pas d'arithmetique d'adresses : on le dit au lieu
+  // de lever sur RES.parseIpNetwork a la premiere frappe.
+  if (!RES) return { err: 'Le résolveur n’est pas chargé', detail: 'La page ne peut rien analyser ni résoudre.' };
+  const t = String(text == null ? '' : text).trim().replace(/\s+/g, ' ');
+  if (!t) return { err: 'Rien à chercher', detail: 'Tapez un VLAN (100), un préfixe (10.1.1.0/24) ou une adresse (10.1.1.42).' };
+
+  const mv = /^(?:vlan[\s\-_:]*)?(\d{1,7})$/i.exec(t);
+  if (mv) {
+    const n = parseInt(mv[1], 10);
+    if (!(n >= 1 && n <= 4094))
+      return {
+        err: 'VLAN ' + n + ' hors plage',
+        detail: 'Un VLAN 802.1Q va de 1 à 4094 : ' + n + ' n’en est pas un. Rien n’a été cherché.',
+        sugg: nearestVlan(Math.min(4094, Math.max(1, n)), 5)
+      };
+    return { type: 'vlan', n: n, key: vlanKey(n), label: 'VLAN ' + n };
+  }
+  if (/^vlan/i.test(t))
+    return {
+      err: '« ' + t + ' » n’est pas un numéro de VLAN',
+      detail: 'Après « vlan », il faut un nombre entier de 1 à 4094. Exemples : 100, vlan 100, vlan-100.',
+      sugg: nearestVlan(100, 5)
+    };
+
+  const slash = t.indexOf('/');
+  if (slash >= 0) {
+    const ap = t.slice(0, slash), pp = t.slice(slash + 1);
+    const ip = RES.parseIpNetwork(ap, false);
+    if (!ip)
+      return { err: 'Préfixe malformé : ' + t, detail: '« ' + ap + ' » n’est pas une adresse IP valide.' };
+    // /24 : longueur. /255.255.255.0 : masque v4, forme qu'ipaddress accepte et
+    // qu'un backup peut contenir — on ne la refuse donc pas comme « longueur ».
+    if (/^\d+$/.test(pp) ? +pp > ip.bits : !(ip.version === 4 && RES.parseIpNetwork(t, false)))
+      return {
+        err: 'Longueur de préfixe invalide : /' + pp,
+        detail: 'Pour une adresse IPv' + ip.version + ', la longueur va de 0 à ' + ip.bits +
+          (ip.version === 4 ? ' (ou un masque contigu, 255.255.255.0).' : '.')
+      };
+    const net = RES.parseIpNetwork(t, false);
+    if (!net) return { err: 'Préfixe malformé : ' + t, detail: 'Forme attendue : 10.1.1.0/24.' };
+    const k = RES.netToString(net);
+    return {
+      type: 'subnet', net: net, key: subnetKey(k), value: k, label: 'préfixe ' + k,
+      note: k !== t ? 'normalisé en ' + k : null
+    };
+  }
+
+  const ip = RES.parseIpNetwork(t, false);
+  if (!ip)
+    return {
+      err: '« ' + t + ' » n’est ni un VLAN, ni un préfixe, ni une adresse',
+      detail: 'Attendu : un numéro de VLAN (100), un préfixe (10.1.1.0/24) ou une adresse seule (10.1.1.42).'
+    };
+  let best = null;
+  PFX_IX.forEach(e => {
+    const m = RES.matchKind(ip, e.net);
+    if (m !== 'exact' && m !== 'aggregate') return;
+    if (!best || e.net.prefix > best.net.prefix) best = e;
+  });
+  if (!best)
+    return {
+      err: 'Aucun préfixe ne contient ' + t,
+      detail: 'Aucun subnet de bridge domain ni préfixe externe des ' + NFAB + ' fabriques ne couvre cette adresse.',
+      sugg: nearestNet(ip, 5)
+    };
+  // Une adresse que SEULE la route par defaut couvre n'est pas « trouvee » :
+  // repondre 0.0.0.0/0 sans le dire ferait croire a une correspondance.
+  if (best.net.prefix === 0)
+    return {
+      err: 'Aucun préfixe spécifique ne contient ' + t,
+      detail: 'Seule la route par défaut ' + best.k + ' couvre cette adresse dans les ' + NFAB +
+        ' fabriques. Aucun subnet de bridge domain ni préfixe externe ne la porte.',
+      sugg: [best.cat].concat(nearestNet(ip, 4))
+    };
+  return {
+    type: 'subnet', net: best.net, key: best.cat.key, value: best.k, label: 'préfixe ' + best.k,
+    note: 'préfixe le plus spécifique contenant ' + t
+  };
+}
+
+/* Execute la requete. Quatre issues, toutes dites a l'ecran : forme fautive,
+   resolveur en echec, resolu mais absent partout, resolu et affiche. */
+function runQuery(text) {
+  const q = parseQuery(text);
+  closeQ();
+  if (q.err) { showError(q.err, q.detail, q.sugg); return; }
+  let d = null;
+  try { d = ensureDataset(q.key); }
+  catch (e) {
+    showError('Le résolveur a échoué sur ' + q.label,
+      String((e && e.message) || e) + ' — l’écran précédent est intact, rien n’a changé.');
+    return;
+  }
+  if (!d) { showError('Résolution impossible', 'Les données des fabriques ne sont pas chargées.'); return; }
+  if (!hasHit(d)) {
+    showError(q.label + ' : aucune correspondance',
+      'Cherché dans les ' + NFAB + ' fabriques (' + FABRICS.map(f => f.id).join(', ') + '). ' +
+      (q.type === 'vlan'
+        ? 'Ce VLAN n’est dans aucun pool, sur aucun EPG, sur aucune interface de L3Out.'
+        : 'Aucun subnet de bridge domain ni préfixe externe ne correspond, même par agrégat.'),
+      q.type === 'vlan' ? nearestVlan(q.n, 5) : nearestNet(q.net, 5));
+    return;
+  }
+  clearError(); qi.blur();
+  // chercher un VLAN, c'est demander l'interieur d'une fabrique : on atterrit
+  // dans la carte. Chercher un prefixe garde la vue courante (E5a).
+  loadDataset(q.key, { view: q.type === 'vlan' ? 'carte' : view });
+}
+
+const qi = $('#q'), ql = $('#qlist');
+let qFiltered = [], qCur = 0, qTimer = null;
+const QMAX = 60;    // la liste reste une liste, pas un annuaire de 300 lignes
+function openQ(txt) {
+  const t = (txt || '').trim().toLowerCase();
+  const q = t ? parseQuery(txt) : null;
+  let list = CATALOG.filter(c => !t || c.value.toLowerCase().indexOf(t) >= 0 ||
+    c.kindLabel.toLowerCase().indexOf(t) >= 0 || (c.net || '').indexOf(t) >= 0);
+  // ce qui est tape passe TOUJOURS en tete, meme si l'index ne le connait pas :
+  // la recherche n'est plus limitee au catalogue.
+  if (q && !q.err) {
+    list = list.filter(c => c.key !== q.key);
+    const known = CATALOG.find(c => c.key === q.key);
+    list.unshift(known || {
+      key: q.key, type: q.type, value: q.type === 'vlan' ? String(q.n) : q.value,
+      kindLabel: q.type === 'vlan' ? 'VLAN' : 'SUBNET', hits: null, total: NFAB, role: q.note || ''
+    });
+  }
+  qFiltered = list.slice(0, QMAX);
+  qCur = 0;
+  ql.innerHTML = '';
+  if (q && q.err) {
+    // ce qui est tape est FAUTIF : aucune option n'est proposee, donc aucune
+    // option n'est selectionnable. Sans ce vidage, Entree chargeait la premiere
+    // entree du catalogue — invisible a l'ecran — au lieu de dire l'erreur.
+    qFiltered = [];
+    ql.innerHTML = '<div class="qopt" style="cursor:default"><span class="t">⚠</span><span>' + esc(q.err) + '</span></div>';
+  } else if (!qFiltered.length) {
+    ql.innerHTML = '<div class="qopt" style="cursor:default">aucun VLAN ni préfixe des backups ne ressemble à « ' + esc(txt) + ' »</div>';
+  } else {
+    qFiltered.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'qopt'; b.type = 'button'; b.dataset.cur = i === qCur ? 1 : 0; b.setAttribute('role', 'option');
+      b.innerHTML = '<span class="t">' + esc(c.kindLabel) + '</span><span class="mono">' + esc(c.value) + '</span>' +
+        '<span class="d">' + (c.hits == null ? 'à résoudre' : c.hits + '/' + c.total + ' fabrics') +
+        (c.role ? ' · ' + esc(c.role) : '') + '</span>';
+      b.onmousedown = ev => { ev.preventDefault(); pickQ(i); };
+      ql.appendChild(b);
+    });
+    if (list.length > QMAX)
+      ql.insertAdjacentHTML('beforeend',
+        '<div class="qopt" style="cursor:default">… ' + (list.length - QMAX) + ' autres — précisez la recherche</div>');
+  }
+  ql.hidden = false; qi.setAttribute('aria-expanded', 'true');
+}
+function closeQ() { ql.hidden = true; qi.setAttribute('aria-expanded', 'false'); }
+function moveQ(d) {
+  if (ql.hidden || !qFiltered.length) return;
+  qCur = (qCur + d + qFiltered.length) % qFiltered.length;
+  [...ql.children].forEach((c, i) => c.dataset.cur = i === qCur ? 1 : 0);
+}
+function pickQ(i) {
+  const c = qFiltered[i];
+  if (c) runQuery(c.value); else runQuery(qi.value);
+}
+qi.addEventListener('focus', () => openQ(qi.value));
+qi.addEventListener('input', () => {
+  // debounce : on ne relit la requete qu'une fois la frappe posee
+  if (qTimer) clearTimeout(qTimer);
+  qTimer = setTimeout(() => { qTimer = null; openQ(qi.value); }, 110);
+});
+qi.addEventListener('blur', () => setTimeout(closeQ, 120));
+qi.addEventListener('keydown', ev => {
+  if (ev.key === 'ArrowDown') { moveQ(1); ev.preventDefault(); }
+  else if (ev.key === 'ArrowUp') { moveQ(-1); ev.preventDefault(); }
+  else if (ev.key === 'Enter') {
+    // Entree n'attend pas le debounce : elle execute ce qui est ecrit.
+    // On REBATIT donc les suggestions depuis la valeur reelle du champ avant
+    // de decider : sinon on consomme la liste de la frappe precedente, et
+    // "3501" tape vite ouvre le VLAN 1 sans le moindre avertissement.
+    if (qTimer) { clearTimeout(qTimer); qTimer = null; openQ(qi.value); }
+    if (!ql.hidden && qFiltered.length) pickQ(qCur); else runQuery(qi.value);
+    ev.preventDefault();
+  }
+  else if (ev.key === 'Escape') { closeQ(); qi.blur(); ev.preventDefault(); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   12 · Panneau redimensionnable (E2)
+   ═══════════════════════════════════════════════════════════════════════════ */
+const panel = $('#panel'), grip = $('#grip');
+const MINP = 30;
+let ph = 208, phPrev = 208, raf = null;
+function setPh(v) {
+  const st = $('#stage').getBoundingClientRect();
+  const max = Math.max(120, st.height - 40);          // « plein ecran » : il ne reste qu'un filet de scene
+  ph = Math.max(MINP, Math.min(max, v));
+  document.documentElement.style.setProperty('--ph', ph + 'px');
+  panel.classList.toggle('closed', ph <= 44);
+  $('#btn-panel').textContent = ph <= 44 ? 'Détail ▴' : 'Masquer ▾';
+  $('#btn-panel').setAttribute('aria-expanded', ph > 44 ? 'true' : 'false');
+  if (raf) cancelAnimationFrame(raf);
+  raf = requestAnimationFrame(() => { raf = null; if (view === 'carte') applyZoom(0); });
+}
+grip.addEventListener('pointerdown', ev => {
+  grip.setPointerCapture(ev.pointerId); grip.classList.add('drag');
+  const move = e => setPh($('#stage').getBoundingClientRect().bottom - e.clientY);
+  const up = e => {
+    grip.classList.remove('drag');
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+    grip.removeEventListener('pointercancel', up);   // sinon le drag reste colle
+    try { grip.releasePointerCapture(ev.pointerId); } catch (_) {}
+    if (ph > 44) phPrev = ph;
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+  grip.addEventListener('pointercancel', up);
+  ev.preventDefault();
+});
+grip.addEventListener('dblclick', () => {
+  const st = $('#stage').getBoundingClientRect();
+  setPh(ph > st.height - 120 ? phPrev : st.height - 40);
+});
+grip.addEventListener('keydown', ev => {
+  if (ev.key === 'ArrowUp') { setPh(ph + (ev.shiftKey ? 120 : 24)); ev.preventDefault(); }
+  if (ev.key === 'ArrowDown') { setPh(ph - (ev.shiftKey ? 120 : 24)); ev.preventDefault(); }
+});
+function togglePanel() {
+  if (ph > 44) { phPrev = ph; setPh(MINP); } else setPh(phPrev > 44 ? phPrev : 208);
+}
+$('#btn-panel').onclick = togglePanel;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   13 · Clavier — l'outil se pilote sans souris
+   ═══════════════════════════════════════════════════════════════════════════ */
+const idxOf = dn => FLAT.findIndex(r => r.dn === dn);
+async function copyDn() {
+  const dn = $('#p-dn').textContent;
+  try { await navigator.clipboard.writeText(dn); }
+  catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = dn; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (__) {}
+    ta.remove();
+  }
+  const c = $('#p-copied'); c.hidden = false; setTimeout(() => { c.hidden = true; }, 1300);
+}
+$('#btn-copy').onclick = copyDn;
+$('#btn-replay').onclick = () => { if (!DATA) return; flIntro(); };
+document.querySelectorAll('input[name=view]').forEach(r => {
+  r.addEventListener('change', () => { if (r.checked && DATA) { r.value === 'orbite' ? riseToOrbit() : dropIntoCarte(fabIdx); } });
+});
+
+addEventListener('keydown', ev => {
+  const t = ev.target;
+  if (t && t.matches && t.matches('input, textarea')) return;
+  if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+  const k = ev.key;
+  if (k === '/') { qi.focus(); qi.select(); ev.preventDefault(); return; }
+  // rien n'a pu etre resolu (donnees illisibles, resolveur en echec au demarrage) :
+  // le message est a l'ecran, les raccourcis ne doivent pas lever par-dessus.
+  if (!DATA) return;
+  if (k === 'o' || k === 'O') { view === 'carte' ? riseToOrbit() : dropIntoCarte(fabIdx); ev.preventDefault(); return; }
+  if (k === 'c' || k === 'C') { copyDn(); ev.preventDefault(); return; }
+  if (k === 'd' || k === 'D') { togglePanel(); ev.preventDefault(); return; }
+  if (k === 'f' || k === 'F') { followPrefix(); ev.preventDefault(); return; }
+  if (k === 'v' || k === 'V') { followVlan(); ev.preventDefault(); return; }
+  // E5(b) : on ne change pas de fabrique depuis l'interieur de la carte.
+  // Les chiffres ne visent une fabrique que dehors, dans l'orbitale.
+  if (k >= '1' && k <= '9' && view === 'orbite') {
+    const i = +k - 1;
+    if ((DATA.fabrics || [])[i]) { fabIdx = i; renderAll(false); paintOrbit(); }
+    ev.preventDefault(); return;
+  }
+  if (view === 'orbite') {
+    if (!ORB) return;
+    const ids = ORB.rows.map(m => m.i);
+    const at = ids.indexOf(fabIdx);
+    if (k === 'ArrowRight' || k === 'ArrowDown') { fabIdx = ids[(at + 1 + ids.length) % ids.length]; renderAll(false); paintOrbit(); ev.preventDefault(); }
+    else if (k === 'ArrowLeft' || k === 'ArrowUp') { fabIdx = ids[(at - 1 + ids.length) % ids.length]; renderAll(false); paintOrbit(); ev.preventDefault(); }
+    else if (k === 'Enter') { dropIntoCarte(fabIdx); ev.preventDefault(); }
+    else if (k === 'Escape') { ev.preventDefault(); }
+    return;
+  }
+  if (!FLAT.length) return;
+  const i = idxOf(sel), here = i >= 0 ? FLAT[i] : null;
+  if (k === 'ArrowDown') { if (i < FLAT.length - 1) select(FLAT[i + 1].dn); ev.preventDefault(); }
+  else if (k === 'ArrowUp') { if (i > 0) select(FLAT[i - 1].dn); ev.preventDefault(); }
+  else if (k === 'ArrowRight') { const n = FLAT[i + 1]; if (n && (!here || n.depth > here.depth)) select(n.dn); ev.preventDefault(); }
+  else if (k === 'ArrowLeft') {
+    if (here) for (let j = i - 1; j >= 0; j--) if (FLAT[j].depth < here.depth) { select(FLAT[j].dn); break; }
+    ev.preventDefault();
+  } else if (k === 'Enter') { zmode = 'loupe'; applyZoom(460); if (ph <= 44) setPh(phPrev); ev.preventDefault(); }
+  else if (k === 'Escape') {
+    if (hist.length) select(hist.pop(), false);
+    else if (zmode === 'loupe') { zmode = 'over'; applyZoom(460); }
+    else riseToOrbit();
+    ev.preventDefault();
+  }
+});
+addEventListener('resize', () => { if (view === 'carte') applyZoom(0); });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   14 · Demarrage
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* Premiere question posee a l'ouverture : le VLAN le plus « vivant » des
+   backups (present sur des EPG, dans le plus de fabriques). Deduit des
+   donnees, pas ecrit en dur — le fichier de fabriques peut changer. */
+function defaultKey() {
+  let best = null;
+  VLAN_IX.forEach(e => {
+    const score = (e.roles.has('client') ? 1000 : 0) + (e.roles.has('transit') ? 500 : 0) + e.fabs.size;
+    if (!best || score > best.score) best = { key: vlanKey(e.n), score: score };
+  });
+  if (best) return best.key;
+  return CATALOG.length ? CATALOG[0].key : null;
+}
+
+/* ── Auto-verification : le resolveur de la page contre l'empreinte calculee
+   par le resolveur Python sur la meme machine. ~80 requetes, une soixantaine
+   de millisecondes ; differee pour que le premier ecran s'affiche d'abord.
+   Un ecart n'est pas un detail : il est dit dans la barre ET a l'ecran. */
+function scheduleSelfCheck() {
+  const badge = $('#fl-build');
+  if (!badge || !window.FLSelfCheck || !DIGESTS) return;
+  // On ECRIT DANS le badge existant au lieu d'en ajouter un second : .topbar
+  // est en flex-wrap, et un element de plus la fait passer a deux rangees
+  // entre 1081 et 1179 px de large - un portable 1366x768 a 125 % tombe pile
+  // dedans, et la scene y perdait ~30 px de hauteur. Sans compter le saut de
+  // la barre 300 ms apres l'ouverture, quand le texte changeait de longueur.
+  const base = (badge.textContent || '').split('  ·  ')[0];
+  const poser = (txt, alerte) => {
+    // largeur figee des l'affichage : le texte final est plus court que le
+    // texte d'attente, donc on reserve la place et rien ne bouge ensuite.
+    badge.textContent = base + '  ·  ' + txt;
+    if (alerte) { badge.style.color = 'var(--fl-warn)'; badge.style.borderColor = 'var(--fl-warn)'; }
+  };
+  badge.style.minWidth = badge.getBoundingClientRect().width + 'px';
+  poser('vérification…', false);
+  const reserve = badge.getBoundingClientRect().width;
+  badge.style.minWidth = reserve + 'px';
+  setTimeout(() => {
+    let r = null;
+    try { r = window.FLSelfCheck.selfCheck(RES, FABRICS, DIGESTS); }
+    catch (e) {
+      poser('⚠ auto-vérification impossible', true);
+      badge.title = String((e && e.message) || e);
+      return;
+    }
+    if (!r.ko.length) {
+      poser('vérifié ' + r.ok + '/' + r.total, false);
+      badge.title = 'Le résolveur JavaScript donne exactement les mêmes réponses que '
+                  + 'le résolveur Python sur ' + r.total + ' requêtes, vérifié sur cette '
+                  + 'machine sans qu\'aucune donnée n\'en sorte.';
+    } else {
+      poser('⚠ ' + r.ko.length + ' écart(s) sur ' + r.total, true);
+      badge.title = 'ECART GRAVE - le résolveur ne concorde pas avec la référence :\n'
+                  + r.ko.slice(0, 12).join('\n')
+                  + (r.ko.length > 12 ? '\n…' : '');
+      console.error('[Fabric Lens] auto-vérification : écarts', r.ko);
+    }
+  }, 60);
+}
+
+setPh(208);
+if (BOOT_ERR || !FABRICS || !CATALOG.length) {
+  showError('Les données des fabriques n’ont pas pu être chargées',
+    BOOT_ERR ? String(BOOT_ERR.message || BOOT_ERR)
+             : 'Le fichier contient ' + NFAB + ' fabrique(s) et aucun VLAN ni préfixe exploitable.');
+} else {
+  const start = defaultKey();
+  try {
+    DATA = ensureDataset(start); DSKEY = start;
+    if (!DATA) throw new Error('le résolveur n’a rien renvoyé pour « ' + String(start) + ' »');
+    renderAll(true);
+    setView('carte', { animate: false });
+  } catch (e) {
+    DATA = null; DSKEY = null;   // etat coherent : les raccourcis se taisent
+    showError('Le résolveur a échoué au démarrage', String((e && e.message) || e) +
+      ' — tapez « / » pour chercher un autre VLAN ou un autre préfixe.');
+  }
+  scheduleSelfCheck();
+  // La sequence d'ouverture se joue APRES que le premier ecran soit pret :
+  // elle le recouvre pendant qu'il se dessine, donc rien n'est perdu a
+  // l'attendre, et l'app est utilisable a la seconde ou l'overlay s'efface.
+  flIntro();
+}
+
+/* Poignee de debogage / de test : l'interface n'en depend pas, mais elle permet de
+   piloter l'ecran depuis la console (ou depuis un harnais headless) sans souris. */
+window.FL = {
+  datasets: DATASETS, catalog: CATALOG, fabrics: () => FABRICS, resolver: RES,
+  vlanIndex: VLAN_IX, prefixIndex: PFX_IX, parseQuery: parseQuery, query: runQuery,
+  model: () => M, data: () => DATA, sel: () => sel, view: () => view, fabIdx: () => fabIdx,
+  load: loadDataset, fabric: switchFabric, setView: setView, select: select, followPrefix: followPrefix,
+  selfCheck: () => window.FLSelfCheck.selfCheck(RES, FABRICS, DIGESTS)
+};
+
+/* ══════════════════════════════════════════════════════════════════════════
+   La sequence d'ouverture de la maquette d'origine, construite pour de vrai.
+
+   Elle n'est PAS decorative : c'est le seul moment ou l'echelle du probleme
+   est visible (toutes les fabriques a la fois), et le seul ou la chaine de
+   policy que l'outil resout est montree en entier.
+
+   Les noms de fabriques et leur nombre viennent des DONNEES, pas d'une liste
+   en dur : la maquette annoncait « 20 fabrics » ; l'application dit ce qu'elle
+   a reellement lu. Et la legende ne parle pas de connexion — l'outil lit un
+   backup de la nuit, il ne se connecte a aucun APIC.
+   ══════════════════════════════════════════════════════════════════════════ */
+function flIntro() {
+  // VITESSE DE LA SEQUENCE — le seul chiffre a toucher.
+  // 1 = le rythme de la maquette d'origine. Au-dessus, tout ralentit dans les
+  // memes proportions : apparitions, traces, convergence, montee de la chaine
+  // et fondu final. Rien d'autre a ajuster.
+  const VIT = 1.6;
+  const t = x => +(x * VIT).toFixed(2);
+  // Declaree ICI et pas au niveau du module : `function` est hissee, `const`
+  // non. flIntro() est appelee plus haut dans le meme bloc <script>, donc une
+  // constante de module serait dans sa zone morte temporelle au moment de
+  // l'appel - ReferenceError, et l'animation s'arretait a mi-chemin.
+  const FL_CHAIN = [
+    ['LEAF PORT', 'ports physiques'],
+    ['IPG', 'interface policy group'],
+    ['AAEP', 'attachable entity profile'],
+    ['PHYSICAL DOMAIN', 'domaine'],
+    ['VLAN POOL', 'encap block'],
+    ['BRIDGE DOMAIN', 'subnet'],
+    ['EPG', 'contrats'],
+  ];
+  const vieux = document.getElementById('fl-intro');
+  if (vieux) vieux.remove();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  // Les noms viennent des DONNEES, jamais d'une liste en dur. La variable du
+  // module d'abord ; a defaut la charge JSON inlinee, qui est toujours la.
+  let fabs = [];
+  try {
+    if (typeof FABRICS !== 'undefined' && Array.isArray(FABRICS))
+      fabs = FABRICS.map(f => f && f.id).filter(Boolean);
+  } catch (e) { /* pas encore initialisee */ }
+  if (!fabs.length) {
+    const tag = document.getElementById('fl-fabrics-data');
+    try {
+      fabs = (JSON.parse(tag.textContent).fabrics || [])
+             .map(f => f && f.meta && f.meta.fabric).filter(Boolean);
+    } catch (e) { fabs = []; }
+  }
+  // 20 points, comme la maquette d'origine : la constellation evoque un
+  // maillage de fabriques, ce n'est pas un compteur. Le nombre REEL est dit
+  // en toutes lettres dans la legende juste en dessous, et les etiquettes
+  // portent de vrais noms de fabriques.
+  const N = 20;
+  const NS = 'http://www.w3.org/2000/svg';
+  const ov = document.createElement('div');
+  ov.id = 'fl-intro';
+  ov.innerHTML = '<div class="fscene"><div class="fconstel"><div class="ffield">'
+    + '<svg viewBox="0 0 560 360"></svg></div>'
+    + '<div class="fcap"></div></div>'
+    + '<div class="fchain"><div class="fsteps"><span class="fspine"></span></div>'
+    + '<div class="fcap2"></div></div></div>';
+  document.body.appendChild(ov);
+
+  const field = ov.querySelector('.ffield');
+  const svg = ov.querySelector('svg');
+  const constel = ov.querySelector('.fconstel');
+  const chain = ov.querySelector('.fchain');
+  const rows = ov.querySelector('.fsteps');
+
+  // --- 1. la constellation : N noeuds sur 3 anneaux elliptiques ------------
+  const cx = 280, cy = 180, pts = [];
+  for (let i = 0; i < N; i++) {
+    const ang = (i / N) * Math.PI * 2, ring = i % 3, r = 118 + ring * 42;
+    pts.push({ x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r * 0.72,
+               hub: ring === 0, delay: 0.05 + i * 0.04 });
+  }
+  pts.forEach((p, i) => {
+    const nxt = pts[(i + 1) % pts.length];
+    const mk = (x1, y1, x2, y2, op, d) => {
+      const l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+      l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+      l.setAttribute('stroke', 'var(--color-accent)');
+      l.setAttribute('stroke-width', '1'); l.setAttribute('pathLength', '1');
+      l.style.strokeDasharray = 1; l.style.strokeDashoffset = 1; l.style.opacity = op;
+      l.style.animation = 'fl-draw ' + t(.5) + 's ease ' + t(d) + 's forwards';
+      svg.appendChild(l);
+    };
+    mk(p.x, p.y, nxt.x, nxt.y, .45, 0.5 + i * 0.03);
+    if (i % 4 === 0) mk(p.x, p.y, cx, cy, .3, 0.7 + i * 0.03);
+  });
+  pts.forEach(p => {
+    const sz = p.hub ? 11 : 7, d = document.createElement('div');
+    d.className = 'fdot';
+    d.style.cssText = 'left:' + (p.x - sz / 2) + 'px;top:' + (p.y - sz / 2) + 'px;width:'
+      + sz + 'px;height:' + sz + 'px;background:'
+      + (p.hub ? 'var(--color-accent)' : 'var(--color-accent-500)') + ';'
+      + (p.hub ? 'box-shadow:0 0 10px color-mix(in srgb,var(--color-accent) 70%,transparent);' : '')
+      + 'animation:fl-pop ' + t(.5) + 's cubic-bezier(.34,1.56,.64,1) '
+      + t(p.delay) + 's both';
+    field.appendChild(d);
+  });
+  // trois noms REELS, pris dans les donnees
+  [[0, 12, -4], [Math.floor(N / 3), 12, -4], [Math.floor(2 * N / 3), -92, -4]]
+    .forEach(([idx, dx, dy], k) => {
+      if (!fabs[k] || !pts[idx]) return;
+      const l = document.createElement('div');
+      l.className = 'flab';
+      l.textContent = fabs[k];
+      l.style.cssText = 'left:' + (pts[idx].x + dx) + 'px;top:' + (pts[idx].y + dy)
+        + 'px;animation:fl-fadein ' + t(.4) + 's ease ' + t(pts[idx].delay + 0.4) + 's both';
+      field.appendChild(l);
+    });
+  const logo = document.createElement('div');
+  logo.className = 'flogo'; logo.textContent = 'FL';
+  logo.style.animation = 'fl-logo ' + t(.6) + 's ease ' + t(.95) + 's both, '
+                      + 'fl-pulse ' + t(1.4) + 's ease ' + t(.95) + 's 1';
+  field.appendChild(logo);
+  ov.querySelector('.fcap').textContent =
+    'Lecture des backups de ' + fabs.length + ' fabrique' + (fabs.length > 1 ? 's' : '') + '\u2026';
+  ov.querySelector('.fcap').style.animation = 'fl-fadein ' + t(.5) + 's ease ' + t(.5) + 's both';
+  constel.style.animation = 'fl-converge ' + t(.55) + 's ease ' + t(1.45) + 's forwards';
+
+  // --- 2. la chaine de policy, de bas en haut -----------------------------
+  FL_CHAIN.forEach(([k, v], i) => {
+    const top = i === FL_CHAIN.length - 1;
+    const d = document.createElement('div');
+    d.className = 'fstep' + (top ? ' ftop' : '');
+    d.innerHTML = '<span class="fk"></span><span class="fv"></span>';
+    d.querySelector('.fk').textContent = k;
+    d.querySelector('.fv').textContent = v;
+    const delay = 1.6 + (FL_CHAIN.length - 1 - i) * 0.14;
+    d.style.animation = 'fl-rise ' + t(.4) + 's ease ' + t(delay) + 's both'
+      + (top ? ', fl-pulse ' + t(1.2) + 's ease ' + t(2.62) + 's 1' : '');
+    rows.appendChild(d);
+  });
+  rows.querySelector('.fspine').style.animation = 'fl-grow ' + t(.5) + 's ease ' + t(1.6) + 's both';
+  chain.style.animation = 'fl-fadein ' + t(.45) + 's ease ' + t(1.55) + 's both';
+  const c2 = ov.querySelector('.fcap2');
+  c2.className = 'fcap'; c2.style.bottom = 'auto'; c2.style.position = 'static';
+  c2.style.marginTop = '22px';
+  c2.textContent = 'R\u00e9solution des cha\u00eenes de policy\u2026';
+
+  // --- 3. sortie ---------------------------------------------------------
+  clearTimeout(flIntro._a); clearTimeout(flIntro._b);
+  flIntro._a = setTimeout(() => {
+    ov.dataset.fading = '1';
+    const app = document.querySelector('.topbar') && document.querySelector('.topbar').parentNode;
+    if (app) { app.id = app.id || 'fl-app-in'; }
+  }, t(2.95) * 1000);
+  flIntro._b = setTimeout(() => { ov.remove(); }, t(3.45) * 1000);
+}
+
+</script>
+</html>
+<!-- FL:BLOCK stamp fmt=text -->
+<span id="fl-build">gabarit non assemble</span>
+<!-- FL:END stamp -->
