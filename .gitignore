@@ -21,6 +21,11 @@ tests/reference/
 data/
 prototypes/data/
 
+# Ce temoin embarque la config complete des fabriques de labo (tenants, VRF,
+# subnets, VLAN pools). Le depot est public : la config d'un parc ACI n'y a pas
+# sa place. Le meme fichier VIDE de donnees est versionne : web/gabarit.html
+prototypes/archive/app-prise-2-avec-donnees-labo.html
+
 # ── Configuration locale ────────────────────────────────────────────────────
 # fabrics.csv porte les chemins réels des backups. Seul l'exemple est versionné.
 scripts/fabrics.csv

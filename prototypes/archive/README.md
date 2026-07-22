@@ -33,9 +33,14 @@ Elle est greffée dans `../app-prise-2.html`, qui devient l'application.
 
 ## app-prise-2-avec-donnees-labo.html
 
-L'application telle qu'elle a ete mise au point, avec les 5 fabriques de labo
-inlinees. Conservee comme temoin : c'est cette version qui a ete validee dans le
-navigateur (tailles, plongee, animation d'ouverture).
+**Non versionne** (voir `.gitignore`) : ce fichier embarque la configuration
+complete des fabriques de labo — tenants, VRF, subnets, VLAN pools. Le depot
+etant public, la config d'un parc ACI n'y a pas sa place.
+
+Il reste present en local comme temoin de la version validee dans le navigateur
+(tailles, plongee, animation d'ouverture). Pour le reconstruire :
+
+    python3 fabriclens/build_page.py --distilled <dir> --template web/gabarit.html
 
 **La version vivante est `web/gabarit.html`** — le meme fichier, vide de donnees.
 `build_page.py` y injecte les donnees du jour. Ne pas editer deux fichiers :
