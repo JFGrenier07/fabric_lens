@@ -561,6 +561,8 @@ kbd {
 .cap[data-cur="1"] .capid { fill: var(--color-accent-2-100); }
 .cap[data-absent="1"] .capbox { stroke-dasharray: 3 3; }
 .cap[data-absent="1"] .capid { fill: var(--color-neutral-600); }
+.cap[data-covered="1"] .capid { fill: var(--color-neutral-400); }
+.cap[data-covered="1"] .capsub { fill: var(--fl-warn); opacity: .75; }
 .cap .capwarn { fill: var(--fl-warn); font-size: 8px; letter-spacing: .06em; }
 .gutter-lbl { fill: var(--color-neutral-700); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; }
 .orb-core-l3 { fill: var(--color-neutral-600); font-size: 8px; text-anchor: middle; letter-spacing: .16em; text-transform: uppercase; }
@@ -2203,7 +2205,18 @@ function nullish(v) {
 // Recherche subnet, tous fabrics
 // ==========================================================================
 
-function resolveSubnet(fabrics, query) {
+/* Ordre d'affichage des natures de correspondance : la passerelle demandee
+   d'abord, la plomberie ensuite, le filet /0 en dernier. */
+const MATCH_RANK = { "exact": 0, "plus-specifique": 1, "aggregate": 2, "default": 3 };
+
+/** opts.expandDefaults : par defaut (false), un hit par la route 0.0.0.0/0 ou
+ *  ::/0 n'est PAS deroule — un seul noeud, note contextuelle, pas de chaine.
+ *  Mesure sur le terrain : chercher une interco /30 ramenait 19 hits TOUS par
+ *  le /0, l'information reelle noyee. Le /0 n'est pas une correspondance au
+ *  prefixe demande, c'est une couverture par defaut : on la DIT, on ne la
+ *  deploie qu'a la demande (l'UI rappelle le resolveur avec expandDefaults). */
+function resolveSubnet(fabrics, query, opts) {
+  const expandDefaults = !!(opts && opts.expandDefaults);
   let qnet = parseIpNetwork(query, false);
   if (!qnet) {
     // Repli identique au Python : on isole la partie adresse et on force /32.
@@ -2225,10 +2238,20 @@ function resolveSubnet(fabrics, query) {
       if (!truthy(ip)) continue;
       const net = parseIpInterfaceNetwork(ip);
       if (!net) continue;
-      const kind = matchKind(qnet, net);
+      let kind = matchKind(qnet, net);
       if (!kind) continue;
+      // Le catch-all n'est un "default" que s'il couvre PAR agregat : chercher
+      // 0.0.0.0/0 lui-meme reste un match exact, deroule normalement.
+      if (kind === "aggregate" && net.prefix === 0) kind = "default";
       const parentMo = fab.byDn.get(rnParent(sub.dn));
       const bd = parentMo;
+      if (kind === "default" && !expandDefaults) {
+        const pNom = parentMo ? S(getd(parentMo.a, "name", "?")) : "?";
+        const sDn = g.add(fab.node(sub, "subnet",
+          `couvre par defaut · gateway ${S(ip)} · ${parentMo && parentMo.c === "fvBD" ? "BD" : "EPG"} ${pNom}`));
+        hits.push({ dn: sDn, role: "bd-gateway", match: kind });
+        continue;
+      }
       const sDn = g.add(fab.node(sub, "subnet",
         `gateway ${S(ip)} - scope ${S(getd(sub.a, "scope", "?"))}`));
       hits.push({ dn: sDn, role: "bd-gateway", match: kind });
@@ -2259,10 +2282,31 @@ function resolveSubnet(fabrics, query) {
       if (!truthy(ip)) continue;
       const net = parseIpNetwork(ip, false);
       if (!net) continue;
-      const kind = matchKind(qnet, net);
+      let kind = matchKind(qnet, net);
       if (!kind) continue;
+      if (kind === "aggregate" && net.prefix === 0) kind = "default";
       const scopes = String(sub.a.scope || "").split(",").filter((s) => s !== "");
       const roles = scopes.map(scopeRole);
+      const inst = fab.byDn.get(rnParent(sub.dn));
+      if (kind === "default" && !expandDefaults) {
+        const outMo = inst ? fab.byDn.get(rnParent(inst.dn)) : null;
+        const ctx = [
+          inst ? "ext-EPG " + S(getd(inst.a, "name", "?")) : null,
+          outMo && outMo.c === "l3extOut" ? "L3Out " + S(getd(outMo.a, "name", "?")) : null,
+        ].filter(Boolean).join(" · ");
+        const sDn = g.add(fab.node(sub, "l3extSubnet",
+          `couvre par defaut · ${ctx}${ctx ? " · " : ""}${scopes.join(", ")}`));
+        g.nodes.get(sDn).roles = roles;
+        hits.push({
+          dn: sDn,
+          role: "l3ext-subnet",
+          match: kind,
+          scopes,
+          securite: roles.some((r) => r.axis === "securite"),
+          routage: roles.some((r) => r.axis === "routage"),
+        });
+        continue;
+      }
       const sDn = g.add(fab.node(sub, "l3extSubnet", scopes.join(", ")));
       g.nodes.get(sDn).roles = roles;
       hits.push({
@@ -2273,7 +2317,6 @@ function resolveSubnet(fabrics, query) {
         securite: roles.some((r) => r.axis === "securite"),
         routage: roles.some((r) => r.axis === "routage"),
       });
-      const inst = fab.byDn.get(rnParent(sub.dn));
       if (inst && inst.c === "l3extInstP") {
         const iDn = g.add(fab.node(inst, "extEpg"));
         g.link(iDn, sDn, "contient", "declare le prefixe");
@@ -2291,10 +2334,27 @@ function resolveSubnet(fabrics, query) {
       }
     }
 
+    // Les vraies correspondances d'abord, le filet par defaut en queue ;
+    // tri STABLE : a nature egale, l'ordre de decouverte est conserve.
+    hits.sort((a, b) => (MATCH_RANK[a.match] || 0) - (MATCH_RANK[b.match] || 0));
+
+    const nDef = hits.filter((h) => h.match === "default").length;
+    const nReal = hits.length - nDef;
+    let status, summary;
+    if (!hits.length) {
+      status = "absent"; summary = "aucune correspondance";
+    } else if (!nReal) {
+      status = "couvert-par-defaut";
+      summary = `couverte par defaut seulement (${nDef} route(s) /0)`;
+    } else {
+      status = "hit";
+      summary = `${nReal} correspondance(s)` + (nDef ? ` + ${nDef} par defaut` : "");
+    }
+
     out.fabrics.push({
       id: fab.id,
-      status: hits.length ? "hit" : "absent",
-      summary: hits.length ? `${hits.length} correspondance(s)` : "aucune correspondance",
+      status,
+      summary,
       backup: { file: nullish(fab.meta.srcFile), generatedAt: nullish(fab.meta.generatedAt) },
       hits,
       nodes: g.nodesObject(),
@@ -2411,16 +2471,33 @@ const vlanKey = n => 'vlan-' + n;
 const subnetKey = s => 'subnet-' + s;
 
 /* Resolution a la demande, memorisee. Si le resolveur leve, l'exception
-   REMONTE : c'est l'appelant qui decide quoi afficher — jamais d'ecran fige. */
+   REMONTE : c'est l'appelant qui decide quoi afficher — jamais d'ecran fige.
+   DEFEXP : les cles dont les routes par defaut (/0) ont ete deroulees A LA
+   DEMANDE — jamais d'office. Une nouvelle recherche repart toujours repliee. */
+const DEFEXP = new Set();
 function ensureDataset(key) {
-  if (DATASETS[key]) return DATASETS[key];
+  const exp = DEFEXP.has(key);
+  const ck = exp ? key + '+def' : key;
+  if (DATASETS[ck]) return DATASETS[ck];
   if (!FABRICS) return null;
   let d = null;
   const mv = /^vlan-(\d+)$/.exec(key);
   if (mv) d = RES.resolveVlan(FABRICS, parseInt(mv[1], 10));
-  else if (key.indexOf('subnet-') === 0) d = RES.resolveSubnet(FABRICS, key.slice(7));
-  if (d) DATASETS[key] = d;
+  else if (key.indexOf('subnet-') === 0)
+    d = RES.resolveSubnet(FABRICS, key.slice(7), exp ? { expandDefaults: true } : undefined);
+  if (d) DATASETS[ck] = d;
   return d;
+}
+
+/* Deroule les routes par defaut de la recherche courante, sans changer de vue
+   ni de fabrique : le graphe s'enrichit, l'ecran se redessine sur place. */
+function flExpandDefaults() {
+  if (!DSKEY) return;
+  DEFEXP.add(DSKEY);
+  try { DATA = ensureDataset(DSKEY); } catch (e) { DEFEXP.delete(DSKEY); return; }
+  sel = null;
+  renderAll(false);
+  setView(view, { animate: false });
 }
 const hasHit = d => !!d && (d.fabrics || []).some(f => f.status && f.status !== 'absent');
 
@@ -2970,6 +3047,9 @@ function orbitModel() {
     let nRoute = 0, nSec = 0, exact = false, warn = false;
     if (isSub) {
       hits.forEach(h => {
+        // Un hit par la route par defaut ne compte ni pour l'axe annonce ni
+        // pour l'axe classification : il ne dit rien du prefixe demande.
+        if (h.match === 'default') return;
         if (h.match === 'exact') { exact = true; nRoute++; }
         if (h.routage) nRoute++;
         if (h.securite) nSec++;
@@ -2981,9 +3061,11 @@ function orbitModel() {
       exact = f.status === 'deployed';
     }
     for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
-    const present = f.status !== 'absent' && (hits.length > 0 || Object.keys(nodes).length > 0);
+    // Couverte par defaut = pas une correspondance : gouttiere, pas d'orbite.
+    const covered = f.status === 'couvert-par-defaut';
+    const present = !covered && f.status !== 'absent' && (hits.length > 0 || Object.keys(nodes).length > 0);
     return {
-      i, f, nRoute, nSec, exact, warn, present, isSub,
+      i, f, nRoute, nSec, exact, warn, present, covered, isSub,
       nObj: Object.keys(nodes).length,
       protocols: f.protocols || [],
       score: (nSec - nRoute) / ((nSec + nRoute) || 1)
@@ -3085,7 +3167,13 @@ function renderOrbit(animate) {
   if (vk) svg.appendChild(svgText('orb-core-src', CX, CY + 86,
     'porté dans les fabriques par le VLAN ' + valueOf(vk), { 'text-anchor': 'middle' }));
 
-  if (ORB.gutter.length) svg.appendChild(svgText('gutter-lbl', 60, OH - 96, 'hors orbite · aucune correspondance dans le backup'));
+  if (ORB.gutter.length) {
+    const nCov = ORB.gutter.filter(m => m.covered).length;
+    const parts = [];
+    if (ORB.gutter.length - nCov) parts.push('aucune correspondance dans le backup');
+    if (nCov) parts.push('couvertes par la route par défaut seulement');
+    svg.appendChild(svgText('gutter-lbl', 60, OH - 96, 'hors orbite · ' + parts.join(' · ')));
+  }
 
   const CW = ORB.dense ? 138 : 168, CH = ORB.dense ? 34 : 50;
   ORB.capEls = new Map();
@@ -3093,6 +3181,7 @@ function renderOrbit(animate) {
     const g = el('g', {
       class: 'cap', tabindex: '0', role: 'button', 'data-fab': m.i,
       'data-absent': m.present ? 0 : 1,
+      'data-covered': m.covered ? 1 : 0,
       'aria-label': m.f.id + ' — ' + (m.f.summary || '') + ' — activer pour ouvrir la carte de ce fabric'
     });
     const x = m.pos.x - CW / 2, y = m.pos.y - CH / 2;
@@ -3327,6 +3416,17 @@ function renderFabCur() {
     '<div class="fabcur-s">' + esc(f.summary || '') + '</div>' +
     (warn ? '<div class="fabcur-w">⚠ EPG en double déploiement</div>' : '');
   box.appendChild(d);
+  // Routes par defaut repliees : on le DIT, et on ne les deroule qu'au clic.
+  const nDef = (f.hits || []).filter(h => h.match === 'default').length;
+  if (nDef && !DEFEXP.has(DSKEY)) {
+    const eb = document.createElement('button');
+    eb.className = 'btn btn-secondary btn-block'; eb.type = 'button';
+    eb.textContent = 'Dérouler ' + (nDef > 1 ? 'les ' + nDef + ' routes par défaut' : 'la route par défaut');
+    eb.title = 'Ce préfixe est couvert par 0.0.0.0/0 (ou ::/0). La chaîne du catch-all '
+      + 'n’est pas déroulée d’office : elle ne dit rien de spécifique au préfixe cherché.';
+    eb.onclick = flExpandDefaults;
+    box.appendChild(eb);
+  }
   const b = document.createElement('button');
   b.className = 'btn btn-secondary btn-block'; b.type = 'button';
   b.innerHTML = '◂ Remonter à l’orbitale <kbd>O</kbd>';
@@ -3348,17 +3448,22 @@ function renderFabCur() {
 function renderFabs() {
   const box = $('#fabs'); box.innerHTML = '';
   const list = DATA.fabrics || [];
-  $('#fab-n').textContent = list.filter(f => f.status !== 'absent').length + '/' + list.length;
+  // Le compteur dit combien de fabriques REPONDENT au prefixe demande : une
+  // fabrique couverte par le seul /0 n'en fait pas partie.
+  $('#fab-n').textContent = list.filter(f => f.status !== 'absent' && f.status !== 'couvert-par-defaut').length + '/' + list.length;
   list.forEach((f, i) => {
     const b = document.createElement('button');
     b.className = 'fab'; b.type = 'button';
     b.setAttribute('aria-current', i === fabIdx ? 'true' : 'false');
-    b.dataset.hit = f.status !== 'absent' ? 1 : 0;
+    const covered = f.status === 'couvert-par-defaut';
+    b.dataset.hit = (f.status !== 'absent' && !covered) ? 1 : 0;
     b.dataset.absent = f.status === 'absent' ? 1 : 0;
     let warn = false;
     const nodes = f.nodes || {};
     for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
-    const roles = (f.roles || []).join('+') || (f.hits && f.hits.length ? f.hits.length + ' corresp.' : '');
+    const nReal = (f.hits || []).filter(h => h.match !== 'default').length;
+    const roles = covered ? 'par défaut'
+      : (f.roles || []).join('+') || (nReal ? nReal + ' corresp.' : '');
     b.innerHTML = '<span class="st"></span><span class="id mono">' + esc(f.id) + '</span>' +
       (warn ? '<span class="wr" title="EPG en double déploiement">⚠</span>' : '') +
       '<span class="rl">' + esc(roles) + '</span>';
@@ -3720,6 +3825,9 @@ function renderAll(intro) {
 
 function loadDataset(key, opts) {
   opts = opts || {};
+  // Chaque recherche repart repliee : les /0 ne se deroulent qu'a la demande,
+  // et la demande ne vaut que pour l'ecran ou elle a ete faite.
+  DEFEXP.delete(key);
   let d = null;
   try { d = ensureDataset(key); }
   catch (e) {
@@ -4467,5 +4575,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 15:14 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 15:36 &#183; 437e04</span>
 <!-- FL:END stamp -->
