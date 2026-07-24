@@ -36,6 +36,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tarfile
 import time
@@ -1072,6 +1073,11 @@ def main(argv):
     ap.add_argument("--list", action="store_true", dest="list_backups",
                     help="lister TOUS les backups disponibles par fabric, en JSON "
                          "sur la sortie standard - pour un selecteur de backup")
+    ap.add_argument("--bundle", default=None,
+                    help="produire UN SEUL fichier JSON pret a charger dans le "
+                         "webui : {fabrics, digests}. Le mode le plus simple pour "
+                         "les premiers tests - le .bat le rapatrie et on le charge "
+                         "directement dans Fabric Lens.")
     ap.add_argument("--pick", default=None,
                     help="traiter ce backup precis au lieu du plus recent "
                          "(nom de fichier ou chemin complet ; avec --only)")
@@ -1084,6 +1090,18 @@ def main(argv):
     ap.add_argument("--only", default=None,
                     help="ne traiter que ce fabric_id")
     args = ap.parse_args(argv[1:])
+
+    # ── MODE PAR DÉFAUT, SANS AUCUNE OPTION ──────────────────────────────
+    # `python3 fl_extract.py` tout court : lit le bloc FABRICS, distille, et
+    # écrit fabriclens-data.json À CÔTÉ DU SCRIPT. C'est le seul geste que
+    # l'utilisateur a à faire. Les options ci-dessus restent pour le debug,
+    # mais on ne les tape jamais au quotidien.
+    if len(argv) <= 1:
+        if not FABRICS:
+            die("le bloc FABRICS en tete de ce fichier est vide : ajoutez-y "
+                "une ligne par fabrique, puis relancez  python3 fl_extract.py")
+        here = os.path.dirname(os.path.abspath(__file__))
+        args.bundle = os.path.join(here, "fabriclens-data.json")
 
     if args.selftest:
         return run_selftest()
@@ -1135,8 +1153,15 @@ def main(argv):
             targets = [t for t in targets if t[0] == args.only]
         return run_dryrun(targets, args.root, args.inventory)
 
+    # Avec --bundle, les .gz ne sont qu'un intermediaire : si aucun --out n'est
+    # donne, on les met dans un repertoire temporaire nettoye a la fin.
+    _bundle_tmp = None
+    if args.bundle and not args.out:
+        import tempfile
+        _bundle_tmp = tempfile.mkdtemp(prefix="fl_bundle_")
+        args.out = _bundle_tmp
     if not args.out:
-        die("--out est requis (sauf avec --selftest ou --dry-run)")
+        die("--out est requis (sauf avec --selftest, --dry-run ou --bundle)")
 
     t0 = time.time()
 
@@ -1344,6 +1369,50 @@ def main(argv):
     if n_ok == 0 and n_skip == 0:
         print("FL-EXTRACT-FAIL")
         return 2
+
+    # --bundle : reunir les .fl.json.gz en un seul JSON chargeable dans le webui,
+    # avec les empreintes de verification si resolve.py est a cote (il l'est,
+    # le .bat le pousse aussi).
+    if args.bundle:
+        fabrics = []
+        for fid in sorted(manifest):
+            gz = os.path.join(args.out, manifest[fid]["file"])
+            if not os.path.exists(gz):
+                continue
+            with gzip.open(gz, "rb") as fh:
+                doc = json.loads(fh.read().decode("utf-8"))
+            fabrics.append({"meta": doc["meta"], "mos": doc["mos"]})
+
+        digests = {"vlan": {}, "subnet": {}}
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            if here not in sys.path:
+                sys.path.insert(0, here)
+            import resolve as _R
+            fabs = _R.load_fabrics(args.out)
+            digests = _R.build_digests(fabs)
+        except Exception as exc:                    # resolve absent ou en erreur
+            warn("empreintes de verification non calculees (%s) - le webui "
+                 "chargera quand meme les fabriques, sans auto-verification" % exc)
+
+        bundle = {
+            "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "fabricCount": len(fabrics),
+            "fabrics": fabrics,
+            "digests": digests,
+        }
+        blob = json.dumps(bundle, ensure_ascii=False, separators=(",", ":"))
+        tmp = args.bundle + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(blob)
+        os.rename(tmp, args.bundle)
+        print("\nBundle : %d fabrique(s), %d VLAN + %d subnet -> %s (%s)"
+              % (len(fabrics), len(digests["vlan"]), len(digests["subnet"]),
+                 args.bundle, human(len(blob.encode("utf-8")))))
+        print("RESULT_FILE=%s" % os.path.basename(args.bundle))
+        if _bundle_tmp:
+            shutil.rmtree(_bundle_tmp, ignore_errors=True)
+
     print("FL-EXTRACT-OK")
     return 1 if n_err else 0
 

@@ -799,6 +799,41 @@ button.chip:hover { border-color: var(--color-accent); color: var(--color-accent
   #fl-intro { display: none !important; }
   #fl-app-in { animation: none !important; }
 }
+
+/* ── Écran d'accueil « Charger des fabriques » ─────────────────────────── */
+#fl-welcome {
+  position: fixed; inset: 0; z-index: 80; background: var(--color-bg);
+  display: grid; place-items: center; padding: var(--space-8);
+}
+#fl-welcome .card {
+  width: min(560px, 92vw); text-align: center;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-lg);
+  background: var(--color-surface); padding: 40px 36px;
+  box-shadow: var(--shadow-md);
+}
+#fl-welcome .fw-logo {
+  width: 54px; height: 54px; margin: 0 auto 20px; border-radius: 14px;
+  background: var(--color-accent-900); border: 1px solid var(--color-accent-600);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--color-accent-200); font: 600 20px/1 ui-monospace, monospace;
+}
+#fl-welcome h2 { font-size: 22px; margin: 0 0 8px; }
+#fl-welcome p { color: var(--color-neutral-400); font-size: 13px; line-height: 1.5; margin: 0 0 24px; }
+#fl-welcome .drop {
+  border: 1.5px dashed var(--color-neutral-700); border-radius: var(--radius-md);
+  padding: 28px 20px; margin-bottom: 18px; transition: border-color .15s, background .15s;
+  cursor: pointer;
+}
+#fl-welcome .drop:hover, #fl-welcome .drop.over {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+#fl-welcome .drop .big { font-size: 13px; color: var(--color-text); margin-bottom: 4px; }
+#fl-welcome .drop .sub { font-size: 11.5px; color: var(--color-neutral-500); }
+#fl-welcome .fw-err { color: var(--fl-warn); font-size: 12px; margin-top: 12px; min-height: 16px; }
+#fl-welcome .fw-hint { font-size: 11px; color: var(--color-neutral-600); margin-top: 20px; line-height: 1.5; }
+#fl-welcome code { font-family: ui-monospace, monospace; color: var(--color-accent-300); }
+#fl-reload { cursor: pointer; }
 </style>
 
 <div id="app">
@@ -829,6 +864,7 @@ button.chip:hover { border-color: var(--color-accent); color: var(--color-accent
 
     <div class="spacer"></div>
     <div class="freshness" id="freshness"></div>
+    <button class="btn btn-secondary" id="btn-reload" type="button" title="Charger un autre fichier de fabriques">⭳ Fichier</button>
     <button class="btn btn-secondary" id="btn-replay" type="button" title="Rejouer l'animation d'entrée">↻</button>
   </header>
 
@@ -965,13 +1001,45 @@ function netKey(cidr) {
    l'affichage en aval est inchange, c'est precisement le contrat du portage.
    ═══════════════════════════════════════════════════════════════════════════ */
 const RES = window.FLResolve;
-let FABRICS = null, DIGESTS = null, BOOT_ERR = null;
+
+/* ── SOURCE DES DONNÉES ────────────────────────────────────────────────────
+   Deux modes, sans changer la suite du démarrage :
+
+   1. « assemblé »  — build_page.py a injecté les données dans les balises
+      #fl-fabrics-data / #fl-digests-data. La page démarre directement.
+   2. « à charger » — le webui est livré vide ; l'utilisateur charge un
+      fabriclens-data.json produit par `fl_extract.py --bundle`. Le fichier
+      chargé est gardé dans window.name (persiste au reload, marche en file://,
+      aucune limite gênante pour ~2 Mo) et la page se recharge : tout le
+      démarrage validé se rejoue à l'identique, mais sur ces données.
+
+   Un file-picker lu par FileReader FONCTIONNE en file:// — c'est l'utilisateur
+   qui fournit le fichier, il n'y a aucun fetch réseau. */
+const FL_NAME_TAG = 'FLDATA:';
+function flReadSource() {
+  // priorité au fichier chargé par l'utilisateur
+  if (typeof name === 'string' && name.indexOf(FL_NAME_TAG) === 0) {
+    try { return JSON.parse(name.slice(FL_NAME_TAG.length)); }
+    catch (e) { try { name = ''; } catch (_) {} }
+  }
+  // sinon, les données assemblées (peuvent être vides = mode à charger)
+  const fj = JSON.parse(document.getElementById('fl-fabrics-data').textContent);
+  const dj = JSON.parse(document.getElementById('fl-digests-data').textContent);
+  return { fabrics: fj.fabrics || [], digests: dj || { vlan: {}, subnet: {} } };
+}
+
+let FABRICS = null, DIGESTS = null, BOOT_ERR = null, FL_SRC_META = null;
+const FL_SRC = flReadSource();
+const FL_EMPTY = !FL_SRC.fabrics || !FL_SRC.fabrics.length;
 try {
   if (!RES) throw new Error('le résolveur inline ne s’est pas chargé (window.FLResolve absent)');
-  FABRICS = RES.loadFabrics(JSON.parse(document.getElementById('fl-fabrics-data').textContent));
-  DIGESTS = JSON.parse(document.getElementById('fl-digests-data').textContent);
+  if (!FL_EMPTY) {
+    FABRICS = RES.loadFabrics({ fabrics: FL_SRC.fabrics });
+    DIGESTS = FL_SRC.digests || { vlan: {}, subnet: {} };
+    FL_SRC_META = FL_SRC.generatedAt || null;
+  }
 } catch (e) { BOOT_ERR = e; }
-const NFAB = FABRICS ? FABRICS.length : 0;
+let NFAB = FABRICS ? FABRICS.length : 0;
 
 const DATASETS = Object.create(null);      // cle -> graphe resolu (cache)
 const vlanKey = n => 'vlan-' + n;
@@ -2554,6 +2622,7 @@ async function copyDn() {
 }
 $('#btn-copy').onclick = copyDn;
 $('#btn-replay').onclick = () => { if (!DATA) return; flIntro(); };
+{ const b = document.getElementById('btn-reload'); if (b) b.onclick = flChangeFile; }
 document.querySelectorAll('input[name=view]').forEach(r => {
   r.addEventListener('change', () => { if (r.checked && DATA) { r.value === 'orbite' ? riseToOrbit() : dropIntoCarte(fabIdx); } });
 });
@@ -2670,7 +2739,10 @@ function scheduleSelfCheck() {
 }
 
 setPh(208);
-if (BOOT_ERR || !FABRICS || !CATALOG.length) {
+if (FL_EMPTY && !BOOT_ERR) {
+  // Webui livré vide : on montre l'écran d'accueil, pas une erreur.
+  flShowWelcome();
+} else if (BOOT_ERR || !FABRICS || !CATALOG.length) {
   showError('Les données des fabriques n’ont pas pu être chargées',
     BOOT_ERR ? String(BOOT_ERR.message || BOOT_ERR)
              : 'Le fichier contient ' + NFAB + ' fabrique(s) et aucun VLAN ni préfixe exploitable.');
@@ -2686,7 +2758,13 @@ if (BOOT_ERR || !FABRICS || !CATALOG.length) {
     showError('Le résolveur a échoué au démarrage', String((e && e.message) || e) +
       ' — tapez « / » pour chercher un autre VLAN ou un autre préfixe.');
   }
-  scheduleSelfCheck();
+  // Le badge #fl-build est inséré APRÈS ce script dans le DOM : on attend donc
+  // qu'il existe pour lancer l'auto-vérification, sinon $('#fl-build') est null
+  // et le résultat n'a nulle part où s'afficher.
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', scheduleSelfCheck, { once: true });
+  else
+    scheduleSelfCheck();
   // La sequence d'ouverture se joue APRES que le premier ecran soit pret :
   // elle le recouvre pendant qu'il se dessine, donc rien n'est perdu a
   // l'attendre, et l'app est utilisable a la seconde ou l'overlay s'efface.
@@ -2695,7 +2773,102 @@ if (BOOT_ERR || !FABRICS || !CATALOG.length) {
 
 /* Poignee de debogage / de test : l'interface n'en depend pas, mais elle permet de
    piloter l'ecran depuis la console (ou depuis un harnais headless) sans souris. */
+
+/* ── Chargement d'un fabriclens-data.json ─────────────────────────────────
+   Lu par FileReader (aucun fetch : marche en file://), gardé dans window.name
+   puis la page se recharge pour que tout le démarrage validé se rejoue sur les
+   nouvelles données. */
+function flLoadFile(file, onErr) {
+  const rd = new FileReader();
+  rd.onerror = () => onErr && onErr('lecture du fichier impossible');
+  rd.onload = () => {
+    let obj;
+    try { obj = JSON.parse(rd.result); }
+    catch (e) { return onErr && onErr('ce fichier n’est pas un JSON valide'); }
+    if (!obj || !Array.isArray(obj.fabrics) || !obj.fabrics.length)
+      return onErr && onErr('ce fichier ne contient aucune fabrique — attendu : le fabriclens-data.json produit par « python3 fl_extract.py »');
+    try { name = FL_NAME_TAG + rd.result; }
+    catch (e) { return onErr && onErr('impossible de garder les données (' + e.message + ')'); }
+    location.reload();
+  };
+  rd.readAsText(file);
+}
+
+/* On accepte AUSSI un dossier (glissé, ou choisi via le sélecteur de dossier).
+   Le script produit un seul fabriclens-data.json ; on le trouve dans la liste.
+   Si le dossier contient plusieurs .json, on prend fabriclens-data.json en
+   priorité, sinon le premier .json venu. */
+function flLoadFromList(files, onErr) {
+  const jsons = [].slice.call(files || []).filter(f =>
+    /\.json$/i.test(f.name) && !/manifest/i.test(f.name));
+  if (!jsons.length)
+    return onErr && onErr('aucun fichier .json dans ce dossier — attendu : fabriclens-data.json');
+  jsons.sort((a, b) =>
+    (/fabriclens-data/i.test(b.name) ? 1 : 0) - (/fabriclens-data/i.test(a.name) ? 1 : 0));
+  flLoadFile(jsons[0], onErr);
+}
+
+function flShowWelcome() {
+  const intro = document.getElementById('fl-intro'); if (intro) intro.remove();
+  const w = document.createElement('div');
+  w.id = 'fl-welcome';
+  w.innerHTML =
+    '<div class="card">' +
+      '<div class="fw-logo">FL</div>' +
+      '<h2>Fabric Lens</h2>' +
+      '<p>Charge un export de fabriques pour commencer.<br>' +
+      'Aucune donnée n’est chargée pour l’instant.</p>' +
+      '<div class="drop" id="fw-drop" tabindex="0" role="button" ' +
+        'aria-label="Choisir le fichier ou le dossier des fabriques">' +
+        '<div class="big">Cliquer pour choisir un fichier</div>' +
+        '<div class="sub">ou glisser-déposer le fichier  ·  ou un dossier entier</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:center;margin-bottom:4px">' +
+        '<button class="btn btn-secondary" id="fw-pick-file" type="button">Un fichier…</button>' +
+        '<button class="btn btn-secondary" id="fw-pick-dir" type="button">Un dossier…</button>' +
+      '</div>' +
+      '<div class="fw-err" id="fw-err"></div>' +
+      '<input type="file" id="fw-file" accept=".json,application/json" hidden>' +
+      '<input type="file" id="fw-dir" webkitdirectory directory hidden>' +
+      '<div class="fw-hint">Ce fichier est produit sur la RHEL par ' +
+        '<code>fl_extract.py --bundle</code> et rapatrié par le .bat. ' +
+        'Rien ne transite par le réseau ici : le fichier est lu localement.</div>' +
+    '</div>';
+  document.body.appendChild(w);
+
+  const drop = w.querySelector('#fw-drop');
+  const inp = w.querySelector('#fw-file');
+  const dir = w.querySelector('#fw-dir');
+  const err = w.querySelector('#fw-err');
+  const fail = m => { err.textContent = m; };
+  const clear = () => { err.textContent = ''; };
+
+  w.querySelector('#fw-pick-file').onclick = () => { clear(); inp.click(); };
+  w.querySelector('#fw-pick-dir').onclick = () => { clear(); dir.click(); };
+  drop.onclick = () => { clear(); inp.click(); };
+  drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inp.click(); } };
+  inp.onchange = () => { if (inp.files && inp.files[0]) flLoadFile(inp.files[0], fail); };
+  dir.onchange = () => flLoadFromList(dir.files, fail);
+
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('over'); clear();
+    // un dossier déposé apparait dans items via webkitGetAsEntry ; sinon files
+    flLoadFromList(e.dataTransfer.files, fail);
+  });
+}
+
+/* « Changer de fichier » : on oublie les données chargées et on revient à
+   l'écran d'accueil. */
+function flChangeFile() {
+  try { name = ''; } catch (e) {}
+  location.reload();
+}
+
+
 window.FL = {
+  loadFile: flLoadFile, changeFile: flChangeFile,
   datasets: DATASETS, catalog: CATALOG, fabrics: () => FABRICS, resolver: RES,
   vlanIndex: VLAN_IX, prefixIndex: PFX_IX, parseQuery: parseQuery, query: runQuery,
   model: () => M, data: () => DATA, sel: () => sel, view: () => view, fabIdx: () => fabIdx,

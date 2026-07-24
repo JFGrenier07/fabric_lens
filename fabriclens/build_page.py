@@ -188,9 +188,13 @@ def main(argv):
     root = os.path.dirname(here)
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--distilled", required=True,
+    ap.add_argument("--shell", action="store_true",
+                    help="produire le webui VIDE (resolveur inline, aucune "
+                         "donnee) : le fichier a ouvrir localement, dans lequel "
+                         "on charge ensuite un fabriclens-data.json")
+    ap.add_argument("--distilled", default=None,
                     help="repertoire des .fl.json.gz produits par fl_extract.py")
-    ap.add_argument("--template", default=os.path.join(root, "prototypes", "app-prise-2.html"),
+    ap.add_argument("--template", default=os.path.join(root, "web", "gabarit.html"),
                     help="gabarit HTML porteur des sentinelles FL:BLOCK")
     ap.add_argument("--out", default=os.path.join(root, "fabric-lens.html"))
     ap.add_argument("--js-dir", default=os.path.join(root, "web"))
@@ -209,7 +213,13 @@ def main(argv):
         html = fh.read()
 
     # --- 1. les donnees --------------------------------------------------
-    bundle, names = bundle_fabrics(args.distilled)
+    if args.shell:
+        bundle, names = {"fabrics": []}, []
+        print("  mode --shell : webui vide, donnees a charger dans l'appli")
+    elif not args.distilled:
+        die("--distilled est requis (sauf avec --shell)")
+    else:
+        bundle, names = bundle_fabrics(args.distilled)
     nmos = sum(len(f["mos"]) for f in bundle["fabrics"])
     print("  %d fabrique(s), %d objets" % (len(bundle["fabrics"]), nmos))
     for f in bundle["fabrics"]:
@@ -224,7 +234,9 @@ def main(argv):
                          + data_json + "</script>")
 
     # --- 2. les empreintes ------------------------------------------------
-    if args.no_digests:
+    if args.shell:
+        dig = {"vlan": {}, "subnet": {}}
+    elif args.no_digests:
         warn("empreintes non calculees : la page ne pourra pas se verifier")
         dig = {"vlan": {}, "subnet": {}}
     else:

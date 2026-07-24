@@ -1,0 +1,68 @@
+FABRIC LENS — comment s'en servir
+================================================================================
+
+Trois pièces :
+
+  fabric-lens.html          le webui. Tu l'ouvres, il ne change plus.
+  scripts\remote\fl_extract.py   le script RHEL. Tu y mets les chemins.
+  scripts\fabric-lens.bat   va chercher les données sur le RHEL (Windows).
+
+
+────────────────────────────────────────────────────────────────────────────────
+À RÉGLER — deux endroits, une fois
+────────────────────────────────────────────────────────────────────────────────
+
+1) scripts\remote\fl_extract.py — le bloc FABRICS en tête :
+
+      FABRICS = [
+          ("DC-PARIS-01",  "/data/backups/aci/paris"),
+          ("DC-LYON-02",   "/data/backups/aci/lyon"),
+          ...  une ligne par fabrique, ajoute/retire au besoin
+      ]
+
+2) scripts\fabric-lens.bat — le nom de ta session PuTTY :
+
+      set "SESSION=RHEL-BACKUPS"
+
+
+────────────────────────────────────────────────────────────────────────────────
+CHAQUE FOIS
+────────────────────────────────────────────────────────────────────────────────
+
+SUR LE RHEL (ou machine Linux) — le script se lance SANS OPTION :
+
+      python3 fl_extract.py
+
+   Il lit le bloc FABRICS, distille les backups, et écrit À CÔTÉ DE LUI :
+      fabriclens-data.json
+
+   (resolve.py doit être dans le même dossier — le script s'en sert pour
+    calculer les empreintes de vérification. Tu ne le lances pas.)
+
+CÔTÉ LINUX : ouvre fabric-lens.html, bouton « Un dossier… » (ou « Un fichier… »),
+   pointe le dossier qui contient fabriclens-data.json. C'est tout.
+
+CÔTÉ WINDOWS : double-clic sur scripts\fabric-lens.bat — il lance le script sur
+   le RHEL et rapatrie fabriclens-data.json dans data\. Puis ouvre
+   fabric-lens.html, bouton « Un fichier… », choisis data\fabriclens-data.json.
+
+Pour recharger un autre export : bouton « Fichier » en haut de l'app.
+
+
+────────────────────────────────────────────────────────────────────────────────
+BON À SAVOIR
+────────────────────────────────────────────────────────────────────────────────
+
+- Rien ne transite par le réseau côté navigateur : le .json est lu localement.
+- En bas à droite, « vérifié 78/78 » = le résolveur du navigateur donne
+  exactement les mêmes réponses que le résolveur Python, sur tes données.
+- Si la console affiche « classes UTILES sans gabarit », transmets-moi ces
+  lignes : tes fabriques ont une construction que le labo n'avait pas.
+- Aucun Python sur Windows. Aucun serveur. Aucun droit admin.
+
+
+────────────────────────────────────────────────────────────────────────────────
+REFABRIQUER LE WEBUI (rare : après une mise à jour du code)
+────────────────────────────────────────────────────────────────────────────────
+
+      python3 fabriclens/build_page.py --shell --out fabric-lens.html
