@@ -1,7 +1,7 @@
 # ── Sorties de build ────────────────────────────────────────────────────────
-# Reconstruites à chaque exécution par build_page.py — les versionner ferait
-# un diff de 660 Ko à chaque changement d'une virgule.
-fabric-lens.html
+# fabric-lens.html EST versionne : c'est le webui pret a ouvrir. On clone,
+# on double-clique, ca marche. (Il se regenere avec build_page.py --shell,
+# mais l'utilisateur ne doit pas avoir a le faire.)
 FabricLens.zip
 FabricLens.tar.gz
 
