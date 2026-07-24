@@ -572,7 +572,15 @@ def resolve_epg(fab, epg, g, note=None, vlan=None):
                "static path binding" if hit else "autre encapsulation")
         # Rattacher le binding a l'IPG reel (vPC) et aux leaves nommees dans le
         # tDn : c'est ce qui donne "l'IPG, la ou les leaf, et l'interface".
-        if tgt:
+        #
+        # MAIS seulement pour les paths qui portent le VLAN cherche (ou tous,
+        # dans une recherche de subnet ou vlan=None). Un EPG multi-encap peut
+        # porter des dizaines de bindings sur d'autres VLANs : les afficher en
+        # retrait dit l'essentiel ("cet EPG porte d'autres encaps"), mais
+        # derouler leur quincaillerie - IPG, selecteurs, ports, profils -
+        # remplirait l'ecran d'objets sans rapport avec la recherche. Le
+        # critere : seules les interrelations du VLAN cherche s'affichent.
+        if tgt and (hit or vlan is None):
             link_path_to_hardware(fab, tgt, g, p_dn)
 
     resolve_contracts(fab, epg["dn"], g, epg_dn)
@@ -1032,10 +1040,17 @@ def resolve_subnet(fabrics, query):
             kind = match_kind(qnet, net)
             if not kind:
                 continue
-            bd = fab.by_dn.get(rn_parent(sub["dn"]))
+            parent_mo = fab.by_dn.get(rn_parent(sub["dn"]))
+            bd = parent_mo
             s_dn = g.add(fab.node(sub, "subnet", "gateway %s - scope %s"
                                   % (ip, sub["a"].get("scope", "?"))))
             hits.append({"dn": s_dn, "role": "bd-gateway", "match": kind})
+            # Un fvSubnet peut vivre SOUS UN EPG et pas sous un BD (observe sur
+            # un APIC reel : epg-GOLD-EPG-FULL/subnet-[10.50.50.1/24]). Sans ce
+            # cas, le subnet trouve restait un noeud orphelin, sans relations.
+            if parent_mo and parent_mo["c"] in ("fvAEPg", "fvESg"):
+                epg_dn = resolve_epg(fab, parent_mo, g)
+                g.link(epg_dn, s_dn, "contient", "subnet declare sur l'EPG")
             if bd and bd["c"] == "fvBD":
                 bd_dn = g.add(fab.node(bd, "bd"))
                 g.link(bd_dn, s_dn, "contient", "gateway")

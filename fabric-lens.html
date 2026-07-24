@@ -1748,7 +1748,11 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
       hit ? "static path binding" : "autre encapsulation");
     // Rattacher le binding a l'IPG reel (vPC) et aux leaves nommees dans le
     // tDn : c'est ce qui donne "l'IPG, la ou les leaf, et l'interface".
-    if (tgt) linkPathToHardware(fab, tgt, g, pDn);
+    // MAIS seulement pour les paths qui portent le VLAN cherche (ou tous si
+    // vlan=None, recherche de subnet) - aligne sur resolve.py : derouler la
+    // quincaillerie des bindings d'AUTRES encaps remplirait l'ecran d'objets
+    // sans rapport avec la recherche.
+    if (tgt && (hit || vlan === null || vlan === undefined)) linkPathToHardware(fab, tgt, g, pDn);
   }
 
   resolveContracts(fab, epg.dn, g, epgDn);
@@ -2195,10 +2199,17 @@ function resolveSubnet(fabrics, query) {
       if (!net) continue;
       const kind = matchKind(qnet, net);
       if (!kind) continue;
-      const bd = fab.byDn.get(rnParent(sub.dn));
+      const parentMo = fab.byDn.get(rnParent(sub.dn));
+      const bd = parentMo;
       const sDn = g.add(fab.node(sub, "subnet",
         `gateway ${S(ip)} - scope ${S(getd(sub.a, "scope", "?"))}`));
       hits.push({ dn: sDn, role: "bd-gateway", match: kind });
+      // Un fvSubnet peut vivre SOUS UN EPG (aligne sur resolve.py) : sans ce
+      // cas, le subnet trouve restait un noeud orphelin.
+      if (parentMo && (parentMo.c === "fvAEPg" || parentMo.c === "fvESg")) {
+        const epgDn = resolveEpg(fab, parentMo, g);
+        g.link(epgDn, sDn, "contient", "subnet declare sur l'EPG");
+      }
       if (bd && bd.c === "fvBD") {
         const bdDn = g.add(fab.node(bd, "bd"));
         g.link(bdDn, sDn, "contient", "gateway");
@@ -4562,5 +4573,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 13:48 &#183; c3b0a1</span>
+<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 13:56 &#183; c3b0a1</span>
 <!-- FL:END stamp -->
