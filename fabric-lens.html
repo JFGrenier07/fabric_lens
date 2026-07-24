@@ -1599,10 +1599,19 @@ function resolveAccessChain(fab, vlan, g) {
 }
 
 function resolveAaep(fab, aaep, vlan, g, aaepDn) {
+  // LE FILTRE EST LE POINT CENTRAL (aligne sur resolve.py, meme commentaire) :
+  // un VLAN pool partage porte des centaines d'encaps ; sans ce filtre,
+  // chercher UN VLAN deroulait toute l'infrastructure access du domain.
+  // On ne deroule les IPG d'un AAEP que si le VLAN y est REELLEMENT deploye
+  // (infraRsFuncToEpg) - la, et seulement la, le VLAN atterrit sur tous les
+  // ports des IPG rattaches. Sinon les vrais ports viennent du static path,
+  // deja resolus par linkPathToHardware.
   // 1. Deploiement direct de l'EPG par l'AAEP (infraRsFuncToEpg porte l'encap)
+  let deployedHere = false;
   for (const f of fab.cls("infraRsFuncToEpg")) {
     if (!f.dn.startsWith(aaep.dn + "/")) continue;
     if (encapNum(f.a.encap) !== vlan) continue;
+    deployedHere = true;
     const fDn = g.add(fab.node(f, "aaepDeploy",
       `deploiement AAEP - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`));
     g.link(aaepDn, fDn, "deploie", "l'AAEP deploie un EPG");
@@ -1610,14 +1619,24 @@ function resolveAaep(fab, aaep, vlan, g, aaepDn) {
     if (epg) g.link(fDn, g.add(fab.node(epg, "epg")), "vers-epg", "vers l'EPG");
   }
 
-  // 2. IPG qui referencent cet AAEP (infraRsAttEntP.tDn)
+  // 2. IPG qui referencent cet AAEP - seulement si le VLAN y est deploye
+  let nIpg = 0;
   for (const rs of fab.revOf(aaep.dn)) {
     if (rs.c !== "infraRsAttEntP") continue;
     const ipg = fab.byDn.get(rnParent(rs.dn));
     if (!ipg) continue;
+    nIpg += 1;
+    if (!deployedHere) continue;   // compte, pas deroule
     const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
     g.link(aaepDn, ipgDn, "utilise-par", "AAEP utilise par l'IPG");
     resolveIpgPorts(fab, ipg, g, ipgDn);
+  }
+
+  if (nIpg && !deployedHere) {
+    const node = g.nodes.get(aaepDn);
+    if (node && !node.note)
+      node.note = nIpg + " IPG rattache(s) - non deroules : ce VLAN " +
+                  "n'est pas deploye via cet AAEP";
   }
 }
 
@@ -4456,5 +4475,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 12:59 &#183; c3b0a1</span>
+<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 13:42 &#183; c3b0a1</span>
 <!-- FL:END stamp -->

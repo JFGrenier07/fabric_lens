@@ -404,13 +404,30 @@ def resolve_access_chain(fab, vlan, g):
 
 
 def resolve_aaep(fab, aaep, vlan, g, aaep_dn):
-    """Depuis un AAEP : déploiement direct d'EPG, puis IPG -> ports -> leaves."""
+    """Depuis un AAEP : déploiement direct d'EPG, puis — SEULEMENT si le VLAN
+    y est réellement déployé — les IPG, ports et leaves.
+
+    LE FILTRE EST LE POINT CENTRAL. Un VLAN pool partagé porte des centaines
+    d'encaps ; son domain est rattaché à plusieurs AAEP, chacun à des dizaines
+    d'IPG. Sans ce filtre, chercher UN VLAN déroulait toute l'infrastructure
+    access du domain — des centaines d'objets sans rapport avec la recherche
+    (constaté sur une fabrique réelle : l'écran devenait illisible).
+
+    La sémantique ACI qui justifie le filtre : quand le VLAN est déployé VIA
+    l'AAEP (infraRsFuncToEpg), il atterrit sur tous les ports des IPG
+    rattachés — les dérouler est alors une information vraie. Quand il ne
+    l'est pas (pool seulement, ou déploiement par static path), les vrais
+    ports viennent du static path binding, déjà résolus précisément par
+    link_path_to_hardware. Le fan-out serait du bruit.
+    """
     # 1. Déploiement direct de l'EPG par l'AAEP (infraRsFuncToEpg porte l'encap)
+    deployed_here = False
     for f in fab.by_class.get("infraRsFuncToEpg", []):
         if not f["dn"].startswith(aaep["dn"] + "/"):
             continue
         if encap_num(f["a"].get("encap")) != vlan:
             continue
+        deployed_here = True
         f_dn = g.add(fab.node(f, "aaepDeploy",
                               "deploiement AAEP - encap %s, mode %s"
                               % (f["a"].get("encap"), f["a"].get("mode", "?"))))
@@ -419,18 +436,30 @@ def resolve_aaep(fab, aaep, vlan, g, aaep_dn):
         if epg:
             g.link(f_dn, g.add(fab.node(epg, "epg")), "vers-epg", "vers l'EPG")
 
-    # 2. IPG qui référencent cet AAEP (infraRsAttEntP.tDn)
+    # 2. IPG qui référencent cet AAEP — seulement si le VLAN y est déployé
+    n_ipg = 0
     for rs in fab.rev.get(aaep["dn"], []):
         if rs["c"] != "infraRsAttEntP":
             continue
         ipg = fab.by_dn.get(rn_parent(rs["dn"]))
         if not ipg:
             continue
+        n_ipg += 1
+        if not deployed_here:
+            continue          # compté, pas déroulé : le VLAN n'arrive pas ici
         lag = ipg["a"].get("lagT")
         kindnote = {"node": "vPC", "link": "Port-Channel"}.get(lag, "acces")
         ipg_dn = g.add(fab.node(ipg, "ipg", kindnote))
         g.link(aaep_dn, ipg_dn, "utilise-par", "AAEP utilise par l'IPG")
         resolve_ipg_ports(fab, ipg, g, ipg_dn)
+
+    # L'information n'est pas perdue : l'AAEP dit combien d'IPG il porte,
+    # et pourquoi ils ne sont pas déroulés.
+    if n_ipg and not deployed_here:
+        node = g.nodes.get(aaep_dn)
+        if node is not None and not node.get("note"):
+            node["note"] = ("%d IPG rattache(s) - non deroules : ce VLAN "
+                            "n'est pas deploye via cet AAEP" % n_ipg)
 
 
 def resolve_ipg_ports(fab, ipg, g, ipg_dn):
