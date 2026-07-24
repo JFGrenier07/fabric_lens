@@ -61,3 +61,6 @@ docs/spec-fonctionnelle.md
 
 # bundle de donnees produit par fl_extract.py (jamais versionne)
 fabriclens-data.json
+
+# Dossier de passation inter-sessions : local, contient des details internes
+docs/REPRISE.md
