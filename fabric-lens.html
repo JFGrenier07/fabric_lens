@@ -2838,14 +2838,15 @@ function resolveSubnet(fabrics, query, opts) {
       }
       const sDn = g.add(fab.node(sub, "l3extSubnet", scopes.join(", ")));
       g.nodes.get(sDn).roles = roles;
-      hits.push({
+      const extHit = {
         dn: sDn,
         role: "l3ext-subnet",
         match: kind,
         scopes,
         securite: roles.some((r) => r.axis === "securite"),
         routage: roles.some((r) => r.axis === "routage"),
-      });
+      };
+      hits.push(extHit);
       if (inst && inst.c === "l3extInstP") {
         const iDn = g.add(fab.node(inst, "extEpg"));
         g.link(iDn, sDn, "contient", "declare le prefixe");
@@ -2854,10 +2855,56 @@ function resolveSubnet(fabrics, query, opts) {
         if (outMo && outMo.c === "l3extOut") {
           const oDn = g.add(fab.node(outMo, "l3out"));
           g.link(iDn, oDn, "contenu-dans", "dans le L3Out");
+          let vrfMo = null;
           for (const rse of fab.cls("l3extRsEctx")) {
             if (rnParent(rse.dn) !== outMo.dn) continue;
             const vrf = fab.inTenant(outMo.dn, "fvCtx", rse.a.tnFvCtxName);
-            if (vrf) g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "L3Out dans le VRF");
+            if (vrf) {
+              vrfMo = vrf;
+              g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "L3Out dans le VRF");
+            }
+          }
+          // Jonction interne : un l3extSubnet n'est pas une adresse, c'est une
+          // politique. Quand son prefixe est EXACTEMENT le gateway d'un BD du
+          // meme VRF, la politique a un visage : c'est l'annonce (ou la
+          // classification) de CE reseau interne — on relie les deux mondes.
+          if (vrfMo) {
+            for (const bsub of fab.cls("fvSubnet")) {
+              const bd = fab.byDn.get(rnParent(bsub.dn));
+              if (!bd || bd.c !== "fvBD") continue;
+              const bnet = parseIpInterfaceNetwork(bsub.a.ip);
+              if (!bnet || !netEq(bnet, net)) continue;
+              let sameVrf = false;
+              for (const rsctx of fab.kids(bd.dn, "fvRsCtx")) {
+                if (fab.inTenant(bd.dn, "fvCtx", rsctx.a.tnFvCtxName) === vrfMo) sameVrf = true;
+              }
+              if (!sameVrf) continue;
+              const bdName = S(getd(bd.a, "name", "?"));
+              const bdDn = g.add(fab.node(bd, "bd"));
+              const bsDn = g.add(fab.node(bsub, "subnet",
+                `gateway ${S(bsub.a.ip)} - scope ${S(getd(bsub.a, "scope", "?"))}`));
+              g.link(bdDn, bsDn, "contient", "gateway");
+              g.link(sDn, bsDn, "annonce-de",
+                "meme prefixe, meme VRF : le reseau interne derriere cette politique");
+              const node = g.nodes.get(sDn);
+              const msg = (extHit.routage ? "annonce" : "classifie") + " le subnet du BD " + bdName;
+              node.note = (node.note ? node.note + " · " : "") + msg;
+              extHit.jonction = { bd: bd.dn, subnet: bsub.dn };
+            }
+          }
+          // Les interfaces du meme L3Out : la jonction avec la famille
+          // interconnexion — noeuds compacts (addr + encap), sans derouler
+          // leur quincaillerie : le pivot se fait en cliquant.
+          for (const lnodep of fab.cls("l3extLNodeP")) {
+            if (rnParent(lnodep.dn) !== outMo.dn) continue;
+            for (const lifp of fab.kids(lnodep.dn, "l3extLIfP")) {
+              for (const rp of fab.kids(lifp.dn, "l3extRsPathL3OutAtt")) {
+                g.link(oDn, intercoNode(fab, g, rp), "contient", "interface du L3Out");
+              }
+              for (const v of fab.kids(lifp.dn, "l3extVirtualLIfP")) {
+                g.link(oDn, intercoNode(fab, g, v), "contient", "interface du L3Out (floating)");
+              }
+            }
           }
         }
       }
@@ -5164,5 +5211,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 17:41 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 18:57 &#183; 437e04</span>
 <!-- FL:END stamp -->
