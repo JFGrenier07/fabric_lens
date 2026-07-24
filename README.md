@@ -24,9 +24,9 @@ Aucun Python sur Windows, aucun serveur, aucun réseau côté navigateur.
 
 Voir **[docs/DEMARRAGE-SIMPLE.txt](docs/DEMARRAGE-SIMPLE.txt)**.
 
-1. Régler le bloc `FABRICS` en tête de `scripts/remote/fl_extract.py`
-   (une ligne par fabrique) et, sous Windows, le nom de session dans
-   `scripts/fabric-lens.bat`.
+1. Lister tes fabriques dans `scripts/remote/fabric_path`
+   (une ligne `nom  chemin`) et, sous Windows, régler le nom de session
+   dans `scripts/fabric-lens.bat`.
 2. **Linux** : `python3 fl_extract.py` → produit `fabriclens-data.json`.
    **Windows** : double-clic `fabric-lens.bat` → le rapatrie dans `data\`.
 3. Ouvrir `fabric-lens.html`, bouton « Charger », pointer le fichier ou le dossier.
@@ -36,6 +36,7 @@ Voir **[docs/DEMARRAGE-SIMPLE.txt](docs/DEMARRAGE-SIMPLE.txt)**.
 | | |
 | --- | --- |
 | `scripts/remote/fl_extract.py` | le script, lancé **sans option** : distille les backups → `fabriclens-data.json` |
+| `scripts/remote/fabric_path` | la liste de tes fabriques (`nom  chemin`), une par ligne |
 | `fabriclens/resolve.py` | le résolveur (référence) ; posé à côté du script, jamais lancé seul |
 | `web/gabarit.html` | le webui — source unique, vide de données |
 | `web/resolve.js` / `web/selfcheck.js` | résolveur JS + auto-vérification, inlinés dans le webui |

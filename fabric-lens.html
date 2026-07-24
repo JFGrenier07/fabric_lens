@@ -4181,7 +4181,16 @@ if (FL_EMPTY && !BOOT_ERR) {
   // La sequence d'ouverture se joue APRES que le premier ecran soit pret :
   // elle le recouvre pendant qu'il se dessine, donc rien n'est perdu a
   // l'attendre, et l'app est utilisable a la seconde ou l'overlay s'efface.
-  flIntro();
+  //
+  // Comme scheduleSelfCheck : ce script s'execute pendant le parsing (le badge
+  // et le reste du body viennent APRES). flIntro appende a document.body ; si
+  // on l'appelle trop tot - typiquement au retour d'un location.reload() apres
+  // un chargement de fichier - l'overlay ne s'accroche pas. On attend donc que
+  // le DOM soit pret.
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', flIntro, { once: true });
+  else
+    flIntro();
 }
 
 /* Poignee de debogage / de test : l'interface n'en depend pas, mais elle permet de
@@ -4447,5 +4456,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 12:28 &#183; c3b0a1</span>
+<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 12:59 &#183; c3b0a1</span>
 <!-- FL:END stamp -->

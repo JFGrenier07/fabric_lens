@@ -1,0 +1,30 @@
+# ============================================================================
+#  fabric_path — la liste de TES fabriques
+# ----------------------------------------------------------------------------
+#  Une fabrique par ligne :   nom  chemin
+#
+#    nom     ce que tu verras dans Fabric Lens. Pas d'espaces.
+#    chemin  ou sont ses backups. Trois formes possibles :
+#              un repertoire   /data/backups/aci/paris
+#                              -> prend le *.tar.gz le PLUS RECENT dedans
+#              un motif        /data/backups/aci/paris/ce2_*.tar.gz
+#                              -> le plus recent qui correspond
+#              un fichier      /data/backups/aci/paris/ce2_du_jour.tar.gz
+#
+#  Le plus recent est choisi automatiquement : d'abord par le timestamp dans
+#  le nom (format APIC 2026-07-20T17-00-24), sinon par la date du fichier.
+#
+#  Separateur : des espaces (comme ci-dessous) ou une virgule.
+#  Lignes vides et lignes commencant par # ignorees.
+#
+#  Ajoute ou retire une ligne au besoin, puis relance.
+#
+#  ATTENTION si ton depot Git est public : ce fichier contient les chemins
+#  internes de ta prod. Ne le committe pas avec tes vrais chemins.
+# ============================================================================
+
+# Remplace ces exemples par tes fabriques :
+
+DC-PARIS-01   /data/backups/aci/paris
+DC-LYON-02    /data/backups/aci/lyon
+DC-FRA-03     /data/backups/aci/francfort/ce2_*.tar.gz

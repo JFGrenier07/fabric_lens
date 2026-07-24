@@ -45,38 +45,68 @@ EXTRACTOR_VERSION = "1.1.0"
 
 # ===========================================================================
 #
-#   TES FABRICS - C'EST LE SEUL BLOC A EDITER
+#   TES FABRICS SE DECLARENT DANS LE FICHIER  fabric_path  (A COTE DE CE SCRIPT)
 #
-#   Une ligne par fabric :   ("nom affiche", "ou sont ses backups"),
+#   Une ligne par fabrique :   nom  chemin
 #
-#   Le "nom affiche" est ce que tu verras dans Fabric Lens. Pas d'espaces.
-#   Le chemin accepte trois formes, au choix, melangeables :
+#   Ce script ne contient PLUS la liste : il lit le fichier `fabric_path`
+#   place dans le meme repertoire. Tu edites ce fichier-la, jamais ce script.
+#   Voir fabric_path pour le format et des exemples.
 #
-#       un repertoire        "/data/backups/aci/paris"
-#                            -> prend le *.tar.gz le plus recent dedans
-#       un motif             "/data/backups/aci/paris/ce2_*.tar.gz"
-#                            -> prend le plus recent qui correspond
-#       un chemin relatif    "paris"
-#                            -> relatif au --root passe par le .bat
-#
-#   Quand plusieurs archives correspondent, la PLUS RECENTE gagne : d'abord
-#   par le timestamp dans le nom (format APIC 2026-07-20T17-00-24), sinon
-#   par la date de modification du fichier.
-#
-#   Laisse la liste VIDE pour l'auto-decouverte (un sous-repertoire par
-#   fabric sous --root, le nom du repertoire servant de nom de fabric).
-#
-#   Ce fichier est renvoye sur le RHEL a chaque execution du .bat : edite-le
-#   ici, cote Windows, et le serveur suit automatiquement.
+#   (Repli : si `fabric_path` est absent, le bloc FABRICS ci-dessous est
+#   utilise a la place - il est vide par defaut.)
 #
 # ===========================================================================
 
-FABRICS = [
-    # ("DC-PARIS-01",  "/data/backups/aci/paris"),
-    # ("DC-LYON-02",   "/data/backups/aci/lyon"),
-    # ("DC-FRA-03",    "/data/backups/aci/francfort/ce2_*.tar.gz"),
-    # ("DC-MTL-04",    "montreal"),
-]
+FABRICS = []      # rempli depuis le fichier fabric_path au demarrage
+
+
+def load_fabric_path():
+    """Lit le fichier `fabric_path` a cote du script -> [(nom, chemin), ...].
+
+    Format, une fabrique par ligne :   nom  chemin
+      - le nom ne contient pas d'espace ; le reste de la ligne est le chemin
+        (un chemin peut donc contenir des espaces)
+      - le separateur peut etre une virgule ou des espaces/tabulations
+      - lignes vides et lignes commencant par # ignorees
+
+    Cherche `fabric_path` puis `fabric_path.txt` (Windows ajoute parfois .txt).
+    Retourne None si aucun fichier trouve (on retombe alors sur le bloc FABRICS).
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("fabric_path", "fabric_path.txt"):
+        path = os.path.join(here, name)
+        if not os.path.isfile(path):
+            continue
+        out = []
+        fh = open(path, "r")
+        try:
+            for lineno, raw in enumerate(fh, 1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "," in line:
+                    nom, chemin = line.split(",", 1)
+                else:
+                    parts = line.split(None, 1)
+                    if len(parts) < 2:
+                        sys.stderr.write("[!] fabric_path ligne %d ignoree "
+                                         "(nom et chemin attendus) : %s\n"
+                                         % (lineno, line))
+                        continue
+                    nom, chemin = parts
+                nom, chemin = nom.strip(), chemin.strip().strip('"').strip("'")
+                if nom and chemin:
+                    out.append((nom, chemin))
+        finally:
+            fh.close()
+        return out
+    return None
+
+
+_fp = load_fabric_path()
+if _fp is not None:
+    FABRICS = _fp
 
 # ===========================================================================
 #   Fin de la zone a editer. Le reste n'a pas besoin d'etre touche.
@@ -1010,7 +1040,8 @@ def run_selftest():
 
 def config_source(inventory_path):
     if FABRICS:
-        return "bloc FABRICS en tete de fl_extract.py (%d entree(s))" % len(FABRICS)
+        src = "fichier fabric_path" if _fp is not None else "bloc FABRICS de fl_extract.py"
+        return "%s (%d fabrique(s))" % (src, len(FABRICS))
     if inventory_path:
         return "inventaire CSV %s" % inventory_path
     return "auto-decouverte sous --root"

@@ -12,13 +12,14 @@ Trois pièces :
 À RÉGLER — deux endroits, une fois
 ────────────────────────────────────────────────────────────────────────────────
 
-1) scripts\remote\fl_extract.py — le bloc FABRICS en tête :
+1) scripts\remote\fabric_path — une fabrique par ligne :
 
-      FABRICS = [
-          ("DC-PARIS-01",  "/data/backups/aci/paris"),
-          ("DC-LYON-02",   "/data/backups/aci/lyon"),
-          ...  une ligne par fabrique, ajoute/retire au besoin
-      ]
+      DC-PARIS-01   /data/backups/aci/paris
+      DC-LYON-02    /data/backups/aci/lyon
+      ...  ajoute/retire au besoin
+
+   nom  chemin. Le chemin peut etre un dossier (le backup le plus recent est
+   pris), un motif ce2_*.tar.gz, ou un fichier precis.
 
 2) scripts\fabric-lens.bat — le nom de ta session PuTTY :
 

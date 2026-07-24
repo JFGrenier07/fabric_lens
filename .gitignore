@@ -58,3 +58,6 @@ fabriclens/build_page.py
 docs/design-spec.md
 docs/dossier-technique.md
 docs/spec-fonctionnelle.md
+
+# bundle de donnees produit par fl_extract.py (jamais versionne)
+fabriclens-data.json

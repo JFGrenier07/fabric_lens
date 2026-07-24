@@ -6,8 +6,8 @@ rem ---------------------------------------------------------------------------
 rem  Fait rouler fl_extract.py sur le RHEL et rapatrie UN fichier :
 rem  fabriclens-data.json. Ensuite, dans fabric-lens.html : bouton "Fichier".
 rem
-rem  Les chemins des fabriques sont dans le bloc FABRICS en tete de
-rem  scripts\remote\fl_extract.py. Ajoute ou retire une ligne au besoin.
+rem  Les chemins des fabriques sont dans le fichier scripts\remote\fabric_path.
+rem  Une ligne par fabrique. Ajoute ou retire au besoin.
 rem
 rem  Prerequis : plink.exe et pscp.exe (PuTTY) dans le PATH, une session PuTTY
 rem  Kerberos qui fonctionne.
@@ -32,6 +32,7 @@ echo.
 echo [1/3] Envoi des scripts...
 plink -batch "%SESSION%" "mkdir -p %REMOTE%" || goto :err
 pscp -batch -q "%HERE%remote\fl_extract.py" "%SESSION%:%REMOTE%/fl_extract.py" || goto :err
+pscp -batch -q "%HERE%remote\fabric_path"   "%SESSION%:%REMOTE%/fabric_path" || goto :err
 pscp -batch -q "%HERE%..\fabriclens\resolve.py" "%SESSION%:%REMOTE%/resolve.py" || goto :err
 
 echo [2/3] Extraction ^(les chemins sont dans fl_extract.py^)...
@@ -51,6 +52,6 @@ endlocal & exit /b 0
 :err
 echo.
 echo   ECHEC. Verifie : le nom de session PuTTY, le ticket Kerberos ^(klist^),
-echo   et les chemins du bloc FABRICS dans fl_extract.py.
+echo   et les chemins dans scripts\remote\fabric_path.
 echo.
 endlocal & exit /b 1
