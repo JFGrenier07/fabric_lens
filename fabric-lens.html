@@ -873,6 +873,7 @@ button.chip:hover { border-color: var(--color-accent); color: var(--color-accent
 
     <div class="spacer"></div>
     <div class="freshness" id="freshness"></div>
+    <button class="btn btn-secondary" id="btn-lang" type="button"></button>
     <button class="btn btn-secondary" id="btn-reload" type="button" title="Charger un autre fichier de fabriques">⭳ Fichier</button>
     <button class="btn btn-secondary" id="btn-replay" type="button" title="Rejouer l'animation d'entrée">↻</button>
   </header>
@@ -984,6 +985,27 @@ button.chip:hover { border-color: var(--color-accent); color: var(--color-accent
 // Etiquettes lisibles — l'interface est en francais, les termes ACI en anglais
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// Langue des textes produits (notes, summaries, libelles d'aretes).
+// Le FRANCAIS est la langue par defaut ET celle des fixtures de regression :
+// tests/regression.mjs compare sans jamais appeler setLang, ce qui verrouille
+// bit a bit que l'ajout de l'anglais n'a rien change au comportement.
+// Les termes ACI (gateway, scope, encap, BD, L3Out...) restent en anglais
+// dans les deux langues — c'est la langue du metier, pas une traduction.
+// --------------------------------------------------------------------------
+let LANG = "fr";
+
+function setLang(l) {
+  LANG = l === "en" ? "en" : "fr";
+}
+
+/** Choisit la variante selon la langue courante. Les deux arguments peuvent
+ *  etre des template literals deja interpoles : sans effet de bord, evaluer
+ *  les deux ne coute rien et garde les appels lisibles. */
+function TR(fr, en) {
+  return LANG === "en" ? en : fr;
+}
+
 const KIND_LABEL = {
   fvnsEncapBlk: "Encap Block",
   fvnsVlanInstP: "VLAN Pool",
@@ -1017,7 +1039,7 @@ const KIND_LABEL = {
   l2extInstP: "External EPG (L2)",
   // relations : ce sont des objets a part entiere dans le MIT, et
   // l'utilisateur doit pouvoir cliquer dessus pour voir leur config brute
-  infraRsFuncToEpg: "Deploiement AAEP",
+  infraRsFuncToEpg: "Deploiement AAEP|AAEP Deployment",
   fvRsPathAtt: "Static Path Binding",
   infraRsVlanNs: "Domain -> VLAN Pool",
   infraRsDomP: "AAEP -> Domain",
@@ -1058,15 +1080,15 @@ const KIND_LABEL = {
 // obliger a lire une legende.
 const SCOPE_ROLE = {
   "import-security": ["securite", "External Subnets for the External EPG",
-    "classifie le trafic entrant dans cet ext-EPG"],
+    "classifie le trafic entrant dans cet ext-EPG|classifies traffic entering this ext-EPG"],
   "shared-security": ["securite", "Shared Security Import",
-    "classifie le trafic inter-VRF"],
+    "classifie le trafic inter-VRF|classifies inter-VRF traffic"],
   "export-rtctrl": ["routage", "Advertised Externally",
-    "le prefixe est annonce vers l'exterieur"],
+    "le prefixe est annonce vers l'exterieur|the prefix is advertised externally"],
   "import-rtctrl": ["routage", "Import Route Control",
-    "filtre ce qui est accepte de l'exterieur"],
+    "filtre ce qui est accepte de l'exterieur|filters what is accepted from outside"],
   "shared-rtctrl": ["routage", "Shared Route Control",
-    "fuite de route inter-VRF"],
+    "fuite de route inter-VRF|inter-VRF route leaking"],
 };
 
 // --------------------------------------------------------------------------
@@ -1525,7 +1547,12 @@ class Fabric {
     return {
       dn: mo.dn,
       cls: mo.c,
-      clsLabel: KIND_LABEL[mo.c] !== undefined ? KIND_LABEL[mo.c] : mo.c,
+      // un libelle peut porter les deux langues, "francais|anglais"
+      clsLabel: KIND_LABEL[mo.c] !== undefined
+        ? (KIND_LABEL[mo.c].indexOf("|") >= 0
+            ? TR(KIND_LABEL[mo.c].split("|")[0], KIND_LABEL[mo.c].split("|")[1])
+            : KIND_LABEL[mo.c])
+        : mo.c,
       label: this.label(mo),
       kind: kind !== null && kind !== undefined ? kind : mo.c,
       note: note === undefined ? null : note,
@@ -1601,13 +1628,13 @@ function resolveAccessChain(fab, vlan, g, activeIpgs) {
     const hi = encapNum(blk.a.to);
     if (lo === null || hi === null || !(lo <= vlan && vlan <= hi)) continue;
     const blkDn = g.add(fab.node(blk, "encapBlk",
-      `bloc ${S(blk.a.from)}-${S(blk.a.to)} (${S(getd(blk.a, "allocMode", "?"))})`));
+      TR(`bloc ${S(blk.a.from)}-${S(blk.a.to)} (${S(getd(blk.a, "allocMode", "?"))})`, `block ${S(blk.a.from)}-${S(blk.a.to)} (${S(getd(blk.a, "allocMode", "?"))})`)));
     roots.push(blkDn);
 
     const pool = fab.byDn.get(rnParent(blk.dn));
     if (!pool) continue;
     const poolDn = g.add(fab.node(pool, "vlanPool"));
-    g.link(blkDn, poolDn, "contenu-dans", "appartient au pool");
+    g.link(blkDn, poolDn, "contenu-dans", TR("appartient au pool", "belongs to the pool"));
 
     // domaines qui referencent ce pool (via infraRsVlanNs.tDn)
     for (const rs of fab.revOf(pool.dn)) {
@@ -1615,7 +1642,7 @@ function resolveAccessChain(fab, vlan, g, activeIpgs) {
       const dom = fab.byDn.get(rnParent(rs.dn));
       if (!dom) continue;
       const domDn = g.add(fab.node(dom, "domain"));
-      g.link(poolDn, domDn, "utilise-par", "pool utilise par le domaine");
+      g.link(poolDn, domDn, "utilise-par", TR("pool utilise par le domaine", "pool used by the domain"));
 
       // AAEP qui referencent ce domaine (via infraRsDomP.tDn) - FILTRE :
       // seuls ceux qui concernent le VLAN cherche sont dessines, les autres
@@ -1632,7 +1659,7 @@ function resolveAccessChain(fab, vlan, g, activeIpgs) {
       if (hidden > 0) {
         const node = g.nodes.get(domDn);
         if (node && !node.note)
-          node.note = hidden + " AAEP rattache(s) au domaine - non affiches : le VLAN n'y est ni deploye ni cable";
+          node.note = hidden + TR(" AAEP rattache(s) au domaine - non affiches : le VLAN n'y est ni deploye ni cable", " AAEP(s) attached to the domain - not shown: the VLAN is neither deployed nor cabled there");
       }
     }
   }
@@ -1662,14 +1689,14 @@ function resolveAaep(fab, aaep, vlan, g, domDn, activeIpgs) {
   if (!deploys.length && !linked.length) return false;
 
   const aaepDn = g.add(fab.node(aaep, "aaep"));
-  g.link(domDn, aaepDn, "utilise-par", "domaine attache a l'AAEP");
+  g.link(domDn, aaepDn, "utilise-par", TR("domaine attache a l'AAEP", "domain attached to the AAEP"));
 
   for (const f of deploys) {
     const fDn = g.add(fab.node(f, "aaepDeploy",
-      `deploiement AAEP - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`));
-    g.link(aaepDn, fDn, "deploie", "l'AAEP deploie un EPG");
+      TR(`deploiement AAEP - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`, `AAEP deployment - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`)));
+    g.link(aaepDn, fDn, "deploie", TR("l'AAEP deploie un EPG", "the AAEP deploys an EPG"));
     const epg = fab.byDn.get(getd(f.a, "tDn", ""));
-    if (epg) g.link(fDn, g.add(fab.node(epg, "epg")), "vers-epg", "vers l'EPG");
+    if (epg) g.link(fDn, g.add(fab.node(epg, "epg")), "vers-epg", TR("vers l'EPG", "to the EPG"));
   }
 
   if (deploys.length) {
@@ -1677,13 +1704,13 @@ function resolveAaep(fab, aaep, vlan, g, domDn, activeIpgs) {
       const ipg = fab.byDn.get(rnParent(rs.dn));
       if (!ipg) continue;
       const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
-      g.link(aaepDn, ipgDn, "utilise-par", "AAEP utilise par l'IPG");
+      g.link(aaepDn, ipgDn, "utilise-par", TR("AAEP utilise par l'IPG", "AAEP used by the IPG"));
       resolveIpgPorts(fab, ipg, g, ipgDn);
     }
   } else {
     for (const ipg of linked) {
       const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
-      g.link(aaepDn, ipgDn, "utilise-par", "AAEP utilise par l'IPG");
+      g.link(aaepDn, ipgDn, "utilise-par", TR("AAEP utilise par l'IPG", "AAEP used by the IPG"));
     }
   }
   return true;
@@ -1707,7 +1734,7 @@ function resolveIpgPorts(fab, ipg, g, ipgDn) {
     if (!hports || !prof) continue;
 
     const selDn = g.add(fab.node(hports, "portSelector"));
-    g.link(ipgDn, selDn, "selectionne-par", "IPG utilise par le selecteur");
+    g.link(ipgDn, selDn, "selectionne-par", TR("IPG utilise par le selecteur", "IPG used by the selector"));
 
     for (const blk of fab.cls("infraPortBlk")) {
       if (!blk.dn.startsWith(hportsDn + "/")) continue;
@@ -1719,7 +1746,7 @@ function resolveIpgPorts(fab, ipg, g, ipgDn) {
     }
 
     const iprofDn = g.add(fab.node(prof, "ifProfile"));
-    g.link(selDn, iprofDn, "contenu-dans", "dans l'interface profile");
+    g.link(selDn, iprofDn, "contenu-dans", TR("dans l'interface profile", "in the interface profile"));
 
     // switch profiles qui referencent cet interface profile
     for (const rs2 of fab.revOf(profDn)) {
@@ -1728,7 +1755,7 @@ function resolveIpgPorts(fab, ipg, g, ipgDn) {
       const nprof = fab.byDn.get(nprofDnS);
       if (!nprof) continue;
       const spDn = g.add(fab.node(nprof, "switchProfile"));
-      g.link(iprofDn, spDn, "utilise-par", "utilise par le switch profile");
+      g.link(iprofDn, spDn, "utilise-par", TR("utilise par le switch profile", "used by the switch profile"));
       for (const nb of fab.cls("infraNodeBlk")) {
         if (!nb.dn.startsWith(nprofDnS + "/")) continue;
         const a = nb.a;
@@ -1793,14 +1820,14 @@ function replayEncapForEpg(fab, epg, vlan, g, epgDn, aaepEntries) {
       if (viaAaep && !aaepDoms.has(dom.dn)) continue;        // cote AAEP du triangle
       closed = true;
       const blkDn = g.add(fab.node(blk, "encapBlk",
-        `bloc ${S(blk.a.from)}-${S(blk.a.to)} (${S(getd(blk.a, "allocMode", "?"))})`));
+        TR(`bloc ${S(blk.a.from)}-${S(blk.a.to)} (${S(getd(blk.a, "allocMode", "?"))})`, `block ${S(blk.a.from)}-${S(blk.a.to)} (${S(getd(blk.a, "allocMode", "?"))})`)));
       const poolDn = g.add(fab.node(pool, "vlanPool"));
-      g.link(blkDn, poolDn, "contenu-dans", "appartient au pool");
+      g.link(blkDn, poolDn, "contenu-dans", TR("appartient au pool", "belongs to the pool"));
       const domDn = g.add(fab.node(dom, "domain"));
-      g.link(poolDn, domDn, "utilise-par", "pool utilise par le domaine");
-      g.link(epgDn, domDn, "vers-domaine", "domaine associe");
+      g.link(poolDn, domDn, "utilise-par", TR("pool utilise par le domaine", "pool used by the domain"));
+      g.link(epgDn, domDn, "vers-domaine", TR("domaine associe", "associated domain"));
       for (const aDn of aaepDoms.get(dom.dn) || []) {
-        g.link(domDn, aDn, "utilise-par", "domaine attache a l'AAEP");
+        g.link(domDn, aDn, "utilise-par", TR("domaine attache a l'AAEP", "domain attached to the AAEP"));
       }
     }
   }
@@ -1813,9 +1840,9 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
   const ap = fab.byDn.get(rnParent(epg.dn));
   if (ap && ap.c === "fvAp") {
     const apDn = g.add(fab.node(ap, "ap"));
-    g.link(epgDn, apDn, "contenu-dans", "dans l'application profile");
+    g.link(epgDn, apDn, "contenu-dans", TR("dans l'application profile", "in the application profile"));
     const tn = fab.byDn.get(rnParent(ap.dn));
-    if (tn) g.link(apDn, g.add(fab.node(tn, "tenant")), "contenu-dans", "dans le tenant");
+    if (tn) g.link(apDn, g.add(fab.node(tn, "tenant")), "contenu-dans", TR("dans le tenant", "in the tenant"));
   }
 
   // EPG -> BD (par NOM, portee tenant)
@@ -1823,14 +1850,14 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
     const bd = fab.inTenant(epg.dn, "fvBD", rsbd.a.tnFvBDName);
     if (!bd) continue;
     const bdDn = g.add(fab.node(bd, "bd"));
-    g.link(epgDn, bdDn, "vers-bd", "EPG rattache au BD");
+    g.link(epgDn, bdDn, "vers-bd", TR("EPG rattache au BD", "EPG attached to the BD"));
     resolveBd(fab, bd, g, bdDn);
   }
 
   // EPG -> domaine
   for (const rsd of fab.kids(epg.dn, "fvRsDomAtt")) {
     const dom = fab.byDn.get(getd(rsd.a, "tDn", ""));
-    if (dom) g.link(epgDn, g.add(fab.node(dom, "domain")), "vers-domaine", "domaine associe");
+    if (dom) g.link(epgDn, g.add(fab.node(dom, "domain")), "vers-domaine", TR("domaine associe", "associated domain"));
   }
 
   // EPG -> static path bindings.
@@ -1851,13 +1878,13 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
     // "(autre encap)" n'a de sens qu'en recherche VLAN : en recherche subnet
     // il n'y a pas d'encap cherche, tous les bindings de l'EPG sont a egalite.
     const pDn = g.add(fab.node(rsp, "staticPath",
-      `encap ${S(a.encap)} sur ${pathTargetLabel(tgt)}, mode ${S(getd(a, "mode", "?"))}`
-      + (hit || isSubnetSearch ? "" : "  (autre encap)")));
+      TR(`encap ${S(a.encap)} sur ${pathTargetLabel(tgt)}, mode ${S(getd(a, "mode", "?"))}`, `encap ${S(a.encap)} on ${pathTargetLabel(tgt)}, mode ${S(getd(a, "mode", "?"))}`)
+      + (hit || isSubnetSearch ? "" : TR("  (autre encap)", "  (other encap)"))));
     // Mutation du noeud STOCKE (il a pu etre fusionne avec un precedent).
     g.nodes.get(pDn).matchesQuery = Boolean(hit);
     g.nodes.get(pDn).target = tgt;
     g.link(epgDn, pDn, "static-port",
-      hit || isSubnetSearch ? "static path binding" : "autre encapsulation");
+      hit || isSubnetSearch ? "static path binding" : TR("autre encapsulation", "other encapsulation"));
     // Rattacher le binding a l'IPG reel (vPC) et aux leaves nommees dans le
     // tDn : c'est ce qui donne "l'IPG, la ou les leaf, et l'interface".
     // MAIS seulement pour les paths qui portent le VLAN cherche (ou tous si
@@ -1887,9 +1914,9 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
       if (!aaep) continue;
       const aaepDn = g.add(fab.node(aaep, "aaep"));
       const fDn = g.add(fab.node(f, "aaepDeploy",
-        `deploiement AAEP - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`));
-      g.link(aaepDn, fDn, "deploie", "l'AAEP deploie un EPG");
-      g.link(fDn, epgDn, "vers-epg", "vers l'EPG");
+        TR(`deploiement AAEP - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`, `AAEP deployment - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`)));
+      g.link(aaepDn, fDn, "deploie", TR("l'AAEP deploie un EPG", "the AAEP deploys an EPG"));
+      g.link(fDn, epgDn, "vers-epg", TR("vers l'EPG", "to the EPG"));
       // Le deploiement est reel : les IPG de l'AAEP portent cet EPG, leur
       // quincaillerie se deroule (aligne sur la semantique de la vue VLAN).
       for (const rs of fab.revOf(aaep.dn)) {
@@ -1897,7 +1924,7 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
         const ipg = fab.byDn.get(rnParent(rs.dn));
         if (!ipg) continue;
         const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
-        g.link(aaepDn, ipgDn, "utilise-par", "AAEP utilise par l'IPG");
+        g.link(aaepDn, ipgDn, "utilise-par", TR("AAEP utilise par l'IPG", "AAEP used by the IPG"));
         resolveIpgPorts(fab, ipg, g, ipgDn);
       }
       if (n !== null) encapEntry(n).aaeps.push({ mo: aaep, nodeDn: aaepDn });
@@ -1914,8 +1941,8 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
         if (!node) continue;
         node.anomaly = "triangle-non-ferme";
         const msg = e.aaeps.length
-          ? `! encap vlan-${n} hors triangle : aucun domaine commun EPG/AAEP dont le pool couvre cet encap`
-          : `! encap vlan-${n} hors triangle : aucun domaine de l'EPG dont le pool couvre cet encap`;
+          ? TR(`! encap vlan-${n} hors triangle : aucun domaine commun EPG/AAEP dont le pool couvre cet encap`, `! encap vlan-${n} outside the triangle: no common EPG/AAEP domain whose pool covers this encap`)
+          : TR(`! encap vlan-${n} hors triangle : aucun domaine de l'EPG dont le pool couvre cet encap`, `! encap vlan-${n} outside the triangle: no EPG domain whose pool covers this encap`);
         node.note = (node.note ? node.note + " · " : "") + msg;
       }
     }
@@ -1940,7 +1967,7 @@ function linkPathToHardware(fab, tgt, g, pathNodeDn) {
       for (const ipg of fab.cls(cls)) {
         if (ipg.a.name === tgt.ipg) {
           const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
-          g.link(pathNodeDn, ipgDn, "vers-ipg", "cible l'IPG");
+          g.link(pathNodeDn, ipgDn, "vers-ipg", TR("cible l'IPG", "targets the IPG"));
           resolveIpgPorts(fab, ipg, g, ipgDn);
         }
       }
@@ -1994,8 +2021,8 @@ function linkPathToHardware(fab, tgt, g, pathNodeDn) {
           const ipg = fab.byDn.get(getd(rs.a, "tDn", ""));
           if (!ipg) continue;
           const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
-          g.link(bDn, ipgDn, "vers-ipg", "port programme par l'IPG");
-          g.link(pathNodeDn, ipgDn, "vers-ipg", "IPG de ce port");
+          g.link(bDn, ipgDn, "vers-ipg", TR("port programme par l'IPG", "port programmed by the IPG"));
+          g.link(pathNodeDn, ipgDn, "vers-ipg", TR("IPG de ce port", "IPG of this port"));
           resolveIpgPorts(fab, ipg, g, ipgDn);
         }
       }
@@ -2028,7 +2055,7 @@ function profileCoversNodes(fab, ifaceProfileDn, nodeIds) {
 function resolveBd(fab, bd, g, bdDn) {
   for (const rsctx of fab.kids(bd.dn, "fvRsCtx")) {
     const vrf = fab.inTenant(bd.dn, "fvCtx", rsctx.a.tnFvCtxName);
-    if (vrf) g.link(bdDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "BD dans le VRF");
+    if (vrf) g.link(bdDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", TR("BD dans le VRF", "BD in the VRF"));
   }
 
   for (const sub of fab.kids(bd.dn, "fvSubnet")) {
@@ -2038,7 +2065,7 @@ function resolveBd(fab, bd, g, bdDn) {
 
   for (const rso of fab.kids(bd.dn, "fvRsBDToOut")) {
     const out = fab.inTenant(bd.dn, "l3extOut", rso.a.tnL3extOutName);
-    if (out) g.link(bdDn, g.add(fab.node(out, "l3out")), "vers-l3out", "BD annonce via");
+    if (out) g.link(bdDn, g.add(fab.node(out, "l3out")), "vers-l3out", TR("BD annonce via", "BD advertises via"));
   }
 }
 
@@ -2087,22 +2114,22 @@ function applyAdvert(fab, bd, sub, net, g, sDn, hit) {
   let verdict, phrase;
   if (!isPublic) {
     verdict = "prive";
-    phrase = "non annonce (scope private)";
+    phrase = TR("non annonce (scope private)", "not advertised (scope private)");
   } else if (!outs.length) {
     verdict = "sans-l3out";
-    phrase = "public mais le BD n'est relie a aucun L3Out !";
+    phrase = TR("public mais le BD n'est relie a aucun L3Out !", "public but the BD is linked to no L3Out!");
   } else {
     const covered = outs.filter((o) => o.via);
     if (covered.length) {
       verdict = "annonce";
-      phrase = "annonce via " + covered.map((o) => S(getd(o.out.a, "name", "?"))).join(", ");
+      phrase = TR("annonce via ", "advertised via ") + covered.map((o) => S(getd(o.out.a, "name", "?"))).join(", ");
     } else {
       verdict = "relie-sans-export";
-      phrase = "public, relie a " + outs.map((o) => S(getd(o.out.a, "name", "?"))).join(", ")
-        + ", mais aucun export-rtctrl ne couvre ce prefixe !";
+      phrase = TR("public, relie a ", "public, linked to ") + outs.map((o) => S(getd(o.out.a, "name", "?"))).join(", ")
+        + TR(", mais aucun export-rtctrl ne couvre ce prefixe !", ", but no export-rtctrl covers this prefix!");
     }
   }
-  if (shared) phrase += " · partage inter-VRF (shared)";
+  if (shared) phrase += TR(" · partage inter-VRF (shared)", " · shared across VRFs (shared)");
 
   const node = g.nodes.get(sDn);
   if (node) node.note = (node.note ? node.note + " · " : "") + phrase;
@@ -2118,10 +2145,10 @@ function applyAdvert(fab, bd, sub, net, g, sDn, hit) {
       if (inst && inst.c === "l3extInstP") {
         const iDn = g.add(fab.node(inst, "extEpg"));
         g.link(oDn, iDn, "contient", "external EPG");
-        g.link(iDn, eDn, "contient", "declare le prefixe");
+        g.link(iDn, eDn, "contient", TR("declare le prefixe", "declares the prefix"));
       }
       g.link(oDn, eDn, "annonce",
-        "export-rtctrl couvre " + netToString(net) + (o.viaKind === "aggregate" ? " (par agregat)" : ""));
+        TR("export-rtctrl couvre ", "export-rtctrl covers ") + netToString(net) + (o.viaKind === "aggregate" ? TR(" (par agregat)", " (by aggregate)") : ""));
     }
     l3outs.push({
       name: S(getd(o.out.a, "name", "?")),
@@ -2205,7 +2232,7 @@ function computeFlows(fab, ownerDn) {
     let name = S(getd(mo.a, "name", "?"));
     if (kind === "vzAny") {
       const vrf = fab.byDn.get(rnParent(mo.dn));
-      name = "tout le VRF " + (vrf ? S(getd(vrf.a, "name", "?")) : "?") + " (vzAny)";
+      name = TR("tout le VRF ", "the whole VRF ") + (vrf ? S(getd(vrf.a, "name", "?")) : "?") + " (vzAny)";
     }
     return { dn: mo.dn, kind, name, tenant: Fabric.tenantOf(mo.dn) };
   };
@@ -2335,13 +2362,13 @@ function findVlanUsers(fab, vlan) {
     const ns = b.static.length, na = b.aaep.length;
     if (ns && na) {
       b.mode = "both";
-      b.note = `deploye DES DEUX FACONS - ${ns} static path(s) ET ${na} deploiement(s) AAEP`;
+      b.note = TR(`deploye DES DEUX FACONS - ${ns} static path(s) ET ${na} deploiement(s) AAEP`, `deployed BOTH WAYS - ${ns} static path(s) AND ${na} AAEP deployment(s)`);
     } else if (ns) {
       b.mode = "static-port";
-      b.note = `deploiement static port (${ns} binding${ns > 1 ? "s" : ""})`;
+      b.note = TR(`deploiement static port (${ns} binding${ns > 1 ? "s" : ""})`, `static port deployment (${ns} binding${ns > 1 ? "s" : ""})`);
     } else {
       b.mode = "aaep";
-      b.note = `deploiement via AAEP (${na})`;
+      b.note = TR(`deploiement via AAEP (${na})`, `deployment via AAEP (${na})`);
     }
   }
   return epgs;
@@ -2360,7 +2387,7 @@ function findVlanTransit(fab, vlan, g) {
     if (encapNum(a.encap) !== vlan) continue;
     const tgt = parsePathTdn(a.tDn);
     const pDn = g.add(fab.node(rp, "l3outPath",
-      `${S(getd(a, "ifInstT", "?"))} ${S(getd(a, "addr", ""))} sur ${pathTargetLabel(tgt)}`));
+      TR(`${S(getd(a, "ifInstT", "?"))} ${S(getd(a, "addr", ""))} sur ${pathTargetLabel(tgt)}`, `${S(getd(a, "ifInstT", "?"))} ${S(getd(a, "addr", ""))} on ${pathTargetLabel(tgt)}`)));
     g.nodes.get(pDn).target = tgt;
     g.nodes.get(pDn).matchesQuery = true;
     if (tgt) linkPathToHardware(fab, tgt, g, pDn);
@@ -2394,7 +2421,7 @@ function findVlanTransit(fab, vlan, g) {
       if (peer.dn.startsWith(lnodep.dn + "/") || peer.dn.startsWith(lifp.dn + "/")) {
         protos.push("BGP");
         g.link(pDn, g.add(fab.node(peer, "bgpPeer", "peer " + S(getd(peer.a, "addr", "?")))),
-          "peer", "voisin BGP");
+          "peer", TR("voisin BGP", "BGP neighbor"));
       }
     }
     g.nodes.get(pDn).protocols = [...new Set(protos)].sort(cmpStr);
@@ -2403,7 +2430,7 @@ function findVlanTransit(fab, vlan, g) {
     for (const rse of fab.cls("l3extRsEctx")) {
       if (rnParent(rse.dn) !== outMo.dn) continue;
       const vrf = fab.inTenant(outMo.dn, "fvCtx", rse.a.tnFvCtxName);
-      if (vrf) g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "L3Out dans le VRF");
+      if (vrf) g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", TR("L3Out dans le VRF", "L3Out in the VRF"));
     }
     for (const inst of fab.cls("l3extInstP")) {
       if (rnParent(inst.dn) !== outMo.dn) continue;
@@ -2415,7 +2442,7 @@ function findVlanTransit(fab, vlan, g) {
         const scopes = String(sub.a.scope || "").split(",").filter((s) => s !== "");
         const sDn = g.add(fab.node(sub, "l3extSubnet", scopes.join(", ")));
         g.nodes.get(sDn).roles = scopes.map(scopeRole);
-        g.link(iDn, sDn, "contient", "prefixe externe");
+        g.link(iDn, sDn, "contient", TR("prefixe externe", "external prefix"));
       }
     }
 
@@ -2426,7 +2453,9 @@ function findVlanTransit(fab, vlan, g) {
 
 function scopeRole(s) {
   const r = SCOPE_ROLE[s] || ["?", s, ""];
-  return { scope: s, axis: r[0], gui: r[1], sens: r[2] };
+  // le champ sens porte les deux langues, "francais|anglais"
+  const sens = String(r[2]).split("|");
+  return { scope: s, axis: r[0], gui: r[1], sens: TR(sens[0], sens[1] || sens[0]) };
 }
 
 // ==========================================================================
@@ -2458,7 +2487,7 @@ function intercoNode(fab, g, mo) {
   if (mo.c === "l3extRsPathL3OutAtt") {
     const tgt = parsePathTdn(a.tDn);
     const dn = g.add(fab.node(mo, "l3outPath",
-      `${S(getd(a, "ifInstT", "?"))} ${S(getd(a, "addr", ""))} sur ${pathTargetLabel(tgt)}`));
+      TR(`${S(getd(a, "ifInstT", "?"))} ${S(getd(a, "addr", ""))} sur ${pathTargetLabel(tgt)}`, `${S(getd(a, "ifInstT", "?"))} ${S(getd(a, "addr", ""))} on ${pathTargetLabel(tgt)}`)));
     g.nodes.get(dn).target = tgt;
     return dn;
   }
@@ -2466,11 +2495,11 @@ function intercoNode(fab, g, mo) {
     return g.add(fab.node(mo, "l3outPath",
       `floating SVI ${S(getd(a, "addr", ""))}${truthy(a.encap) ? " encap " + S(a.encap) : ""}`));
   if (mo.c === "l3extRsDynPathAtt")
-    return g.add(fab.node(mo, "l3outPath", `adresse flottante ${S(getd(a, "floatingAddr", ""))}`));
+    return g.add(fab.node(mo, "l3outPath", TR(`adresse flottante ${S(getd(a, "floatingAddr", ""))}`, `floating address ${S(getd(a, "floatingAddr", ""))}`)));
   if (mo.c === "l3extMember")
-    return g.add(fab.node(mo, "l3outPath", `cote ${S(getd(a, "side", "?"))} ${S(getd(a, "addr", ""))}`));
+    return g.add(fab.node(mo, "l3outPath", TR(`cote ${S(getd(a, "side", "?"))} ${S(getd(a, "addr", ""))}`, `side ${S(getd(a, "side", "?"))} ${S(getd(a, "addr", ""))}`)));
   if (mo.c === "l3extIp")
-    return g.add(fab.node(mo, "l3outPath", `adresse par noeud ${S(getd(a, "addr", ""))}`));
+    return g.add(fab.node(mo, "l3outPath", TR(`adresse par noeud ${S(getd(a, "addr", ""))}`, `per-node address ${S(getd(a, "addr", ""))}`)));
   return g.add(fab.node(mo, "l3outPath"));
 }
 
@@ -2494,7 +2523,7 @@ function linkIntercoContext(fab, g, anchorDn, startMo) {
   }
   if (!lnodep || lnodep.c !== "l3extLNodeP") return;
   const lnodepDn = g.add(fab.node(lnodep, "l3outNodeProfile"));
-  g.link(lnodepDn, prev, "contient", lifp ? "logical interface profile" : "sous le node profile");
+  g.link(lnodepDn, prev, "contient", lifp ? "logical interface profile" : TR("sous le node profile", "under the node profile"));
   const outMo = fab.byDn.get(rnParent(lnodep.dn));
   if (!outMo || outMo.c !== "l3extOut") return;
   const oDn = g.add(fab.node(outMo, "l3out"));
@@ -2513,7 +2542,7 @@ function linkIntercoContext(fab, g, anchorDn, startMo) {
   for (const rse of fab.cls("l3extRsEctx")) {
     if (rnParent(rse.dn) !== outMo.dn) continue;
     const vrf = fab.inTenant(outMo.dn, "fvCtx", rse.a.tnFvCtxName);
-    if (vrf) g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "L3Out dans le VRF");
+    if (vrf) g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", TR("L3Out dans le VRF", "L3Out in the VRF"));
   }
   for (const inst of fab.cls("l3extInstP")) {
     if (rnParent(inst.dn) !== outMo.dn) continue;
@@ -2532,7 +2561,7 @@ function intercoAnchor(fab, g, mo) {
     if (!par) return dn;
     if (par.c === "l3extMember" || par.c === "l3extRsPathL3OutAtt" || par.c === "l3extVirtualLIfP") {
       const pDn = intercoNode(fab, g, par);
-      g.link(pDn, curDn, "contient", "porte l'adresse");
+      g.link(pDn, curDn, "contient", TR("porte l'adresse", "carries the address"));
       cur = par; curDn = pDn;
       continue;
     }
@@ -2576,7 +2605,7 @@ function findSubnetInterco(fab, qnet, g, hits) {
         const par = fab.byDn.get(rnParent(mo.dn));
         if (par && (par.c === "l3extRsPathL3OutAtt" || par.c === "l3extVirtualLIfP")) {
           const pDn = intercoNode(fab, g, par);
-          g.link(pDn, dn, "peer", "voisin BGP");
+          g.link(pDn, dn, "peer", TR("voisin BGP", "BGP neighbor"));
           linkIntercoContext(fab, g, pDn, fab.byDn.get(rnParent(par.dn)));
         } else {
           linkIntercoContext(fab, g, dn, par);
@@ -2595,7 +2624,7 @@ function findSubnetInterco(fab, qnet, g, hits) {
       const net = ipNetOfAddr(rs.a.rtrId);
       if (!net || !netEq(qnet, net)) continue;
       const dn = g.add(fab.node(rs, "l3outPath",
-        `router-id ${S(rs.a.rtrId)} — pas un subnet route`));
+        TR(`router-id ${S(rs.a.rtrId)} — pas un subnet route`, `router-id ${S(rs.a.rtrId)} — not a routed subnet`)));
       g.nodes.get(dn).matchesQuery = true;
       hits.push({ dn, role: "router-id", match: "exact" });
       linkIntercoContext(fab, g, dn, fab.byDn.get(rnParent(rs.dn)));
@@ -2622,25 +2651,25 @@ function findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults) {
     const nodeAtt = fab.byDn.get(rnParent(rt.dn));
     if (kind === "default" && !expandDefaults) {
       const dn = g.add(fab.node(rt, "l3outPath",
-        `couvre par defaut · route statique via node ${nodeAtt ? nodeIdOf(nodeAtt.a.tDn) : "?"}`));
+        TR(`couvre par defaut · route statique via node ${nodeAtt ? nodeIdOf(nodeAtt.a.tDn) : "?"}`, `covers by default · static route via node ${nodeAtt ? nodeIdOf(nodeAtt.a.tDn) : "?"}`)));
       hits.push({ dn, role: "route-statique", match: kind });
       continue;
     }
     const dn = g.add(fab.node(rt, "l3outPath",
-      `route statique ${S(rt.a.ip)}`
+      TR(`route statique ${S(rt.a.ip)}`, `static route ${S(rt.a.ip)}`)
       + (truthy(rt.a.pref) && rt.a.pref !== "1" ? ` pref ${S(rt.a.pref)}` : "")
       + (rt.a.aggregate === "yes" ? " · aggregate" : "")));
     g.nodes.get(dn).matchesQuery = true;
     hits.push({ dn, role: "route-statique", match: kind });
     for (const nh of fab.kids(rt.dn, "ipNexthopP")) {
       const nhDn = g.add(fab.node(nh, "l3outPath", `next-hop ${S(getd(nh.a, "nhAddr", "?"))}`));
-      g.link(dn, nhDn, "via", "next-hop de la route");
+      g.link(dn, nhDn, "via", TR("next-hop de la route", "next-hop of the route"));
     }
     if (nodeAtt && nodeAtt.c === "l3extRsNodeL3OutAtt") {
       const naDn = g.add(fab.node(nodeAtt, "l3outPath",
         `node ${nodeIdOf(nodeAtt.a.tDn)}`
         + (truthy(nodeAtt.a.rtrId) ? ` · router-id ${S(nodeAtt.a.rtrId)}` : "")));
-      g.link(naDn, dn, "contient", "route statique du node");
+      g.link(naDn, dn, "contient", TR("route statique du node", "static route of the node"));
       linkIntercoContext(fab, g, naDn, fab.byDn.get(rnParent(nodeAtt.dn)));
     }
   }
@@ -2656,12 +2685,12 @@ function findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults) {
     g.nodes.get(dn).matchesQuery = true;
     hits.push({ dn, role: "next-hop", match: kind });
     if (rt && rt.c === "ipRouteP") {
-      const rtDn = g.add(fab.node(rt, "l3outPath", `route statique ${S(rt.a.ip)}`));
-      g.link(rtDn, dn, "via", "next-hop de la route");
+      const rtDn = g.add(fab.node(rt, "l3outPath", TR(`route statique ${S(rt.a.ip)}`, `static route ${S(rt.a.ip)}`)));
+      g.link(rtDn, dn, "via", TR("next-hop de la route", "next-hop of the route"));
       const nodeAtt = fab.byDn.get(rnParent(rt.dn));
       if (nodeAtt && nodeAtt.c === "l3extRsNodeL3OutAtt") {
         const naDn = g.add(fab.node(nodeAtt, "l3outPath", `node ${nodeIdOf(nodeAtt.a.tDn)}`));
-        g.link(naDn, rtDn, "contient", "route statique du node");
+        g.link(naDn, rtDn, "contient", TR("route statique du node", "static route of the node"));
         linkIntercoContext(fab, g, naDn, fab.byDn.get(rnParent(nodeAtt.dn)));
       }
     }
@@ -2682,19 +2711,19 @@ function findSubnetMgmt(fab, qnet, g, hits, expandDefaults) {
     const instName = inst ? S(getd(inst.a, "name", "?")) : "?";
     if (kind === "default" && !expandDefaults) {
       const dn = g.add(fab.node(ms, "l3extSubnet",
-        `couvre par defaut · acces management (OOB) · ${instName}`));
+        TR(`couvre par defaut · acces management (OOB) · ${instName}`, `covers by default · management access (OOB) · ${instName}`)));
       hits.push({ dn, role: "mgmt", match: kind });
       continue;
     }
     const dn = g.add(fab.node(ms, "l3extSubnet",
-      "autorise a atteindre le management (OOB) des switches"));
+      TR("autorise a atteindre le management (OOB) des switches", "allowed to reach the switches' management (OOB)")));
     g.nodes.get(dn).matchesQuery = true;
     hits.push({ dn, role: "mgmt", match: kind });
     if (inst && inst.c === "mgmtInstP") {
       const nOob = fab.kids(inst.dn, "mgmtRsOoBProv").length;
       const iDn = g.add(fab.node(inst, "extEpg",
-        "external management EPG" + (nOob ? ` · ${nOob} contrat(s) OOB` : "")));
-      g.link(iDn, dn, "contient", "declare le prefixe");
+        "external management EPG" + (nOob ? TR(` · ${nOob} contrat(s) OOB`, ` · ${nOob} OOB contract(s)`) : "")));
+      g.link(iDn, dn, "contient", TR("declare le prefixe", "declares the prefix"));
     }
   }
 }
@@ -2750,21 +2779,21 @@ function resolveVlan(fabrics, vlan) {
       if (nUsers) {
         let nboth = 0;
         for (const b of users.values()) if (b.mode === "both") nboth += 1;
-        bits.push(`${nUsers} EPG client${nUsers > 1 ? "s" : ""}`);
-        if (nboth) bits.push(`${nboth} en DOUBLE deploiement`);
+        bits.push(TR(`${nUsers} EPG client${nUsers > 1 ? "s" : ""}`, `${nUsers} client EPG${nUsers > 1 ? "s" : ""}`));
+        if (nboth) bits.push(TR(`${nboth} en DOUBLE deploiement`, `${nboth} in DOUBLE deployment`));
       }
       if (transit.length) {
-        bits.push(`${transit.length} interface${transit.length > 1 ? "s" : ""} de L3Out`
+        bits.push(TR(`${transit.length} interface${transit.length > 1 ? "s" : ""} de L3Out`, `${transit.length} L3Out interface${transit.length > 1 ? "s" : ""}`)
           + (protos.length ? ` (${protos.join(", ")})` : ""));
       }
       summary = bits.join(" - ");
     } else if (blocks.length) {
       status = "pool-only";
-      summary = "present dans un pool, aucun EPG ne l'utilise";
+      summary = TR("present dans un pool, aucun EPG ne l'utilise", "present in a pool, no EPG uses it");
       roles = [];
     } else {
       status = "absent";
-      summary = "aucune correspondance";
+      summary = TR("aucune correspondance", "no match");
       roles = [];
     }
 
@@ -2846,9 +2875,9 @@ function resolveSubnet(fabrics, query, opts) {
     // Oui, /32 sur une IPv6 est etrange — c'est ce que fait la reference, et le
     // contrat est l'egalite, pas la correction.
     const ip = parseIpAddress(String(query).split("/")[0]);
-    if (!ip) throw new Error("adresse invalide : " + query);
+    if (!ip) throw new Error(TR("adresse invalide : ", "invalid address: ") + query);
     qnet = parseIpNetwork(ipToString(ip) + "/32", false);
-    if (!qnet) throw new Error("adresse invalide : " + query);
+    if (!qnet) throw new Error(TR("adresse invalide : ", "invalid address: ") + query);
   }
 
   const out = { query: { type: "subnet", value: netToString(qnet) }, fabrics: [] };
@@ -2871,7 +2900,7 @@ function resolveSubnet(fabrics, query, opts) {
       if (kind === "default" && !expandDefaults) {
         const pNom = parentMo ? S(getd(parentMo.a, "name", "?")) : "?";
         const sDn = g.add(fab.node(sub, "subnet",
-          `couvre par defaut · gateway ${S(ip)} · ${parentMo && parentMo.c === "fvBD" ? "BD" : "EPG"} ${pNom}`));
+          TR(`couvre par defaut · gateway ${S(ip)} · ${parentMo && parentMo.c === "fvBD" ? "BD" : "EPG"} ${pNom}`, `covers by default · gateway ${S(ip)} · ${parentMo && parentMo.c === "fvBD" ? "BD" : "EPG"} ${pNom}`)));
         hits.push({ dn: sDn, role: "bd-gateway", match: kind });
         continue;
       }
@@ -2887,7 +2916,7 @@ function resolveSubnet(fabrics, query, opts) {
       // cas, le subnet trouve restait un noeud orphelin.
       if (parentMo && (parentMo.c === "fvAEPg" || parentMo.c === "fvESg")) {
         const epgDn = resolveEpg(fab, parentMo, g);
-        g.link(epgDn, sDn, "contient", "subnet declare sur l'EPG");
+        g.link(epgDn, sDn, "contient", TR("subnet declare sur l'EPG", "subnet declared on the EPG"));
       }
       if (bd && bd.c === "fvBD") {
         const bdDn = g.add(fab.node(bd, "bd"));
@@ -2924,7 +2953,7 @@ function resolveSubnet(fabrics, query, opts) {
           outMo && outMo.c === "l3extOut" ? "L3Out " + S(getd(outMo.a, "name", "?")) : null,
         ].filter(Boolean).join(" · ");
         const sDn = g.add(fab.node(sub, "l3extSubnet",
-          `couvre par defaut · ${ctx}${ctx ? " · " : ""}${scopes.join(", ")}`));
+          TR(`couvre par defaut · ${ctx}${ctx ? " · " : ""}${scopes.join(", ")}`, `covers by default · ${ctx}${ctx ? " · " : ""}${scopes.join(", ")}`)));
         g.nodes.get(sDn).roles = roles;
         hits.push({
           dn: sDn,
@@ -2949,19 +2978,19 @@ function resolveSubnet(fabrics, query, opts) {
       hits.push(extHit);
       if (inst && inst.c === "l3extInstP") {
         const iDn = g.add(fab.node(inst, "extEpg"));
-        g.link(iDn, sDn, "contient", "declare le prefixe");
+        g.link(iDn, sDn, "contient", TR("declare le prefixe", "declares the prefix"));
         resolveContracts(fab, inst.dn, g, iDn);
         const outMo = fab.byDn.get(rnParent(inst.dn));
         if (outMo && outMo.c === "l3extOut") {
           const oDn = g.add(fab.node(outMo, "l3out"));
-          g.link(iDn, oDn, "contenu-dans", "dans le L3Out");
+          g.link(iDn, oDn, "contenu-dans", TR("dans le L3Out", "in the L3Out"));
           let vrfMo = null;
           for (const rse of fab.cls("l3extRsEctx")) {
             if (rnParent(rse.dn) !== outMo.dn) continue;
             const vrf = fab.inTenant(outMo.dn, "fvCtx", rse.a.tnFvCtxName);
             if (vrf) {
               vrfMo = vrf;
-              g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "L3Out dans le VRF");
+              g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", TR("L3Out dans le VRF", "L3Out in the VRF"));
             }
           }
           // Jonction interne : un l3extSubnet n'est pas une adresse, c'est une
@@ -2985,9 +3014,9 @@ function resolveSubnet(fabrics, query, opts) {
                 `gateway ${S(bsub.a.ip)} - scope ${S(getd(bsub.a, "scope", "?"))}`));
               g.link(bdDn, bsDn, "contient", "gateway");
               g.link(sDn, bsDn, "annonce-de",
-                "meme prefixe, meme VRF : le reseau interne derriere cette politique");
+                TR("meme prefixe, meme VRF : le reseau interne derriere cette politique", "same prefix, same VRF: the internal network behind this policy"));
               const node = g.nodes.get(sDn);
-              const msg = (extHit.routage ? "annonce" : "classifie") + " le subnet du BD " + bdName;
+              const msg = TR((extHit.routage ? "annonce" : "classifie") + " le subnet du BD " + bdName, (extHit.routage ? "advertises" : "classifies") + " the subnet of BD " + bdName);
               node.note = (node.note ? node.note + " · " : "") + msg;
               extHit.jonction = { bd: bd.dn, subnet: bsub.dn };
             }
@@ -2999,10 +3028,10 @@ function resolveSubnet(fabrics, query, opts) {
             if (rnParent(lnodep.dn) !== outMo.dn) continue;
             for (const lifp of fab.kids(lnodep.dn, "l3extLIfP")) {
               for (const rp of fab.kids(lifp.dn, "l3extRsPathL3OutAtt")) {
-                g.link(oDn, intercoNode(fab, g, rp), "contient", "interface du L3Out");
+                g.link(oDn, intercoNode(fab, g, rp), "contient", TR("interface du L3Out", "L3Out interface"));
               }
               for (const v of fab.kids(lifp.dn, "l3extVirtualLIfP")) {
-                g.link(oDn, intercoNode(fab, g, v), "contient", "interface du L3Out (floating)");
+                g.link(oDn, intercoNode(fab, g, v), "contient", TR("interface du L3Out (floating)", "L3Out interface (floating)"));
               }
             }
           }
@@ -3030,21 +3059,21 @@ function resolveSubnet(fabrics, query, opts) {
     const allMgmt = nReal > 0 && realHits.every((h) => h.role === "mgmt");
     let status, summary;
     if (!hits.length) {
-      status = "absent"; summary = "aucune correspondance";
+      status = "absent"; summary = TR("aucune correspondance", "no match");
     } else if (!nReal) {
       status = "couvert-par-defaut";
-      summary = `couverte par defaut seulement (${nDef} route(s) /0)`;
+      summary = TR(`couverte par defaut seulement (${nDef} route(s) /0)`, `covered by default only (${nDef} /0 route(s))`);
     } else if (allInterco) {
       status = "hit";
-      summary = `interconnexion — ne vit dans aucun BD (${nReal})`
-        + (nDef ? ` + ${nDef} par defaut` : "");
+      summary = TR(`interconnexion — ne vit dans aucun BD (${nReal})`, `interconnection — lives in no BD (${nReal})`)
+        + (nDef ? TR(` + ${nDef} par defaut`, ` + ${nDef} by default`) : "");
     } else if (allMgmt) {
       status = "hit";
-      summary = `acces au management (OOB) (${nReal})`
-        + (nDef ? ` + ${nDef} par defaut` : "");
+      summary = TR(`acces au management (OOB) (${nReal})`, `management access (OOB) (${nReal})`)
+        + (nDef ? TR(` + ${nDef} par defaut`, ` + ${nDef} by default`) : "");
     } else {
       status = "hit";
-      summary = `${nReal} correspondance(s)` + (nDef ? ` + ${nDef} par defaut` : "");
+      summary = TR(`${nReal} correspondance(s)`, `${nReal} match(es)`) + (nDef ? TR(` + ${nDef} par defaut`, ` + ${nDef} by default`) : "");
     }
 
     out.fabrics.push({
@@ -3079,7 +3108,7 @@ function loadFabrics(json) {
 }
 
 
-window.FLResolve = { KIND_LABEL: KIND_LABEL, SCOPE_ROLE: SCOPE_ROLE, splitRns: splitRns, lastRn: lastRn, rnParent: rnParent, pathLabel: pathLabel, parsePathTdn: parsePathTdn, pathTargetLabel: pathTargetLabel, encapNum: encapNum, parseIpNetwork: parseIpNetwork, parseIpInterfaceNetwork: parseIpInterfaceNetwork, netToString: netToString, matchKind: matchKind, resolveVlan: resolveVlan, resolveSubnet: resolveSubnet, loadFabrics: loadFabrics };
+window.FLResolve = { setLang: setLang, KIND_LABEL: KIND_LABEL, SCOPE_ROLE: SCOPE_ROLE, splitRns: splitRns, lastRn: lastRn, rnParent: rnParent, pathLabel: pathLabel, parsePathTdn: parsePathTdn, pathTargetLabel: pathTargetLabel, encapNum: encapNum, parseIpNetwork: parseIpNetwork, parseIpInterfaceNetwork: parseIpInterfaceNetwork, netToString: netToString, matchKind: matchKind, resolveVlan: resolveVlan, resolveSubnet: resolveSubnet, loadFabrics: loadFabrics };
 })();
 </script>
 <!-- FL:END resolve -->
@@ -3092,6 +3121,20 @@ window.FLResolve = { KIND_LABEL: KIND_LABEL, SCOPE_ROLE: SCOPE_ROLE, splitRns: s
    ═══════════════════════════════════════════════════════════════════════════ */
 const NS = 'http://www.w3.org/2000/svg';
 const $ = s => document.querySelector(s);
+
+/* ── Langue de l'interface ─────────────────────────────────────────────────
+   FR par défaut ; bascule par le bouton FR/EN de la topbar, mémorisée dans
+   localStorage (silencieux si indisponible), appliquée par location.reload() :
+   les données vivent dans window.name, le démarrage validé se rejoue à
+   l'identique dans l'autre langue — le même mécanisme que le chargement d'un
+   fichier. Les termes ACI restent en anglais dans les deux langues. */
+let FL_LANG = 'fr';
+try { if (localStorage.getItem('fl-lang') === 'en') FL_LANG = 'en'; } catch (e) {}
+const T = (fr, en) => FL_LANG === 'en' ? en : fr;
+function flToggleLang() {
+  try { localStorage.setItem('fl-lang', FL_LANG === 'en' ? 'fr' : 'en'); } catch (e) { return; }
+  location.reload();
+}
 const el = (t, a) => { const n = document.createElementNS(NS, t); for (const k in a) n.setAttribute(k, a[k]); return n; };
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const trunc = (s, n) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -3124,6 +3167,51 @@ function netKey(cidr) {
    l'affichage en aval est inchange, c'est precisement le contrat du portage.
    ═══════════════════════════════════════════════════════════════════════════ */
 const RES = window.FLResolve;
+if (RES && RES.setLang) RES.setLang(FL_LANG);
+
+/* ── Libellés statiques du gabarit (hors JS) ───────────────────────────────
+   Le HTML de l'app est AVANT ce script : les éléments existent déjà. Le
+   bouton FR/EN affiche la langue CIBLE. En anglais, les quelques textes
+   écrits en dur dans le HTML sont réécrits ici — tout le reste est généré
+   par le JS, qui passe par T(). */
+(function applyStaticLang() {
+  const btn = $('#btn-lang');
+  if (btn) {
+    btn.textContent = FL_LANG === 'en' ? 'FR' : 'EN';
+    btn.title = T('Switch the interface to English', 'Interface en français');
+    btn.onclick = flToggleLang;
+  }
+  if (FL_LANG !== 'en') return;
+  document.querySelectorAll('.seg-opt input').forEach(inp => {
+    const tn = inp.nextSibling;
+    if (tn && tn.nodeType === 3) tn.textContent = inp.value === 'carte' ? 'Map ' : 'Orbital ';
+  });
+  const hb = document.querySelector('.hintbar');
+  if (hb) hb.innerHTML =
+    '<span><kbd>↑</kbd><kbd>↓</kbd> browse</span>' +
+    '<span><kbd>←</kbd><kbd>→</kbd> up / down</span>' +
+    '<span><kbd>↵</kbd> enter</span>' +
+    '<span><kbd>Esc</kbd> back</span>' +
+    '<span><kbd>O</kbd> dive ⇄ rise</span>' +
+    '<span><kbd>F</kbd> where this prefix lives</span>' +
+    '<span><kbd>V</kbd> the VLAN carrying it</span>' +
+    '<span><kbd>1</kbd>…<kbd>9</kbd> fabric (orbital)</span>' +
+    '<span><kbd>D</kbd> detail</span>';
+  const q = $('#q'); if (q) q.setAttribute('aria-label', 'Search a VLAN or a subnet');
+  const rl = $('#btn-reload'); if (rl) { rl.textContent = '⭳ File'; rl.title = 'Load another fabrics file'; }
+  const rp = $('#btn-replay'); if (rp) rp.title = 'Replay the opening animation';
+  const cp = $('#btn-copy'); if (cp) cp.innerHTML = 'Copy DN <kbd>C</kbd>';
+  const pc = $('#p-copied'); if (pc) pc.textContent = 'DN copied';
+  const tt = $('#tree-title'); if (tt) tt.textContent = 'Full path';
+  const grip = $('#grip'); if (grip) grip.setAttribute('aria-label', 'Resize the detail panel (up/down arrows, double-click for full screen)');
+  const nav = document.querySelector('nav.side'); if (nav) nav.setAttribute('aria-label', 'Fabrics and full path');
+  const seg = document.querySelector('.seg'); if (seg) seg.setAttribute('aria-label', 'View');
+  document.querySelectorAll('.pcol h6').forEach(h => {
+    if (h.textContent === 'Objet') h.textContent = 'Object';
+    if (h.textContent === 'Configuration brute') h.textContent = 'Raw configuration';
+    if (h.textContent === 'Voisins') h.textContent = 'Neighbors';
+  });
+})();
 
 /* ── SOURCE DES DONNÉES ────────────────────────────────────────────────────
    Deux modes, sans changer la suite du démarrage :
@@ -3154,7 +3242,7 @@ let FABRICS = null, BOOT_ERR = null, FL_SRC_META = null;
 const FL_SRC = flReadSource();
 const FL_EMPTY = !FL_SRC.fabrics || !FL_SRC.fabrics.length;
 try {
-  if (!RES) throw new Error('le résolveur inline ne s’est pas chargé (window.FLResolve absent)');
+  if (!RES) throw new Error(T('le résolveur inline ne s’est pas chargé (window.FLResolve absent)', 'the inline resolver did not load (window.FLResolve missing)'));
   if (!FL_EMPTY) {
     FABRICS = RES.loadFabrics({ fabrics: FL_SRC.fabrics });
     FL_SRC_META = FL_SRC.generatedAt || null;
@@ -3357,17 +3445,17 @@ const RANK = {
 const rankOf = k => RANK[k] || [1, 6];
 const LANE_NAME = [
   'Chaîne access policies · du VLAN pool aux leaves et aux ports',
-  'Chaîne logique · du tenant à l’EPG, au L3Out et aux contrats'
+  T('Chaîne logique · du tenant à l’EPG, au L3Out et aux contrats', 'Logical chain · from tenant to EPG, L3Out and contracts')
 ];
 const NW = 136, NH = 36, GW = 120, GH = 26, PITCH_X = 164, PITCH_Y = 52, PAD = 28;
 const KIND_FR = {
-  encapBlk: 'encap block', vlanPool: 'vlan pool', domain: 'domain', aaep: 'AAEP', aaepDeploy: 'déploiement AAEP',
+  encapBlk: 'encap block', vlanPool: 'vlan pool', domain: 'domain', aaep: 'AAEP', aaepDeploy: T('déploiement AAEP', 'AAEP deployment'),
   ipg: 'IPG', portSelector: 'port selector', ifProfile: 'interface profile', portBlk: 'port block',
   switchProfile: 'switch profile', nodeBlk: 'node block', epg: 'EPG', staticPath: 'static path',
   ap: 'application profile', tenant: 'tenant', bd: 'bridge domain', vrf: 'VRF', subnet: 'subnet',
-  l3out: 'L3Out', l3outPath: 'interface de L3Out', l3outIfProfile: 'logical interface profile',
-  l3outNodeProfile: 'logical node profile', bgpPeer: 'peer', routingProto: 'protocole', extEpg: 'ext-EPG',
-  l3extSubnet: 'préfixe externe', contract: 'contract', subject: 'subject', filter: 'filter', entry: 'entry'
+  l3out: 'L3Out', l3outPath: T('interface de L3Out', 'L3Out interface'), l3outIfProfile: 'logical interface profile',
+  l3outNodeProfile: 'logical node profile', bgpPeer: 'peer', routingProto: T('protocole', 'protocol'), extEpg: 'ext-EPG',
+  l3extSubnet: T('préfixe externe', 'external prefix'), contract: 'contract', subject: 'subject', filter: 'filter', entry: 'entry'
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3503,7 +3591,7 @@ function renderGraph(intro) {
     svg.appendChild(el('line', { class: 'fabric-edge', x1: M.edgeX, y1: 4, x2: M.edgeX, y2: M.height - 4 }));
     svg.appendChild(svgText('fabric-edge-lbl', M.edgeX + 9, 15, 'hors fabric →'));
     // repetee a la verticale : la loupe peut cadrer n'importe quelle bande de hauteur
-    const vt = svgText('fabric-edge-lbl', 0, 0, 'limite du fabric', {
+    const vt = svgText('fabric-edge-lbl', 0, 0, T('limite du fabric', 'fabric boundary'), {
       transform: 'translate(' + (M.edgeX - 6) + ',' + (M.height / 2) + ') rotate(-90)', 'text-anchor': 'middle'
     });
     svg.appendChild(vt);
@@ -3565,7 +3653,7 @@ function renderGraph(intro) {
       // le libelle de l'objet porte deja « leaf 101 . eth1/1 » : la sous-ligne
       // sert donc a l'IPG, la seule piece qui manquait a l'ecran.
       g.appendChild(svgText('sub mono', o.x + 9, o.y + 32,
-        trunc(dep.ipgName ? 'IPG ' + dep.ipgName : 'port en accès direct', 27)));
+        trunc(dep.ipgName ? 'IPG ' + dep.ipgName : T('port en accès direct', 'direct access port'), 27)));
       const bits = [];
       if (dep.nodesTxt) bits.push((dep.kind === 'vpc' ? 'vPC ' : 'leaf ') + dep.nodesTxt);
       if (dep.port) bits.push(dep.port);
@@ -3573,7 +3661,7 @@ function renderGraph(intro) {
       if (dep.pod) bits.push('pod ' + dep.pod);
       o._depTxt = bits.join(' · ');
     }
-    if (o.warn) g.appendChild(svgText('warn', o.x + 9, o.y - 4, '⚠ DOUBLE DÉPLOIEMENT'));
+    if (o.warn) g.appendChild(svgText('warn', o.x + 9, o.y - 4, T('⚠ DOUBLE DÉPLOIEMENT', '⚠ DOUBLE DEPLOYMENT')));
     const ti = el('title');
     ti.textContent = o.n.label + (o._depTxt ? '\nPoint de déploiement · ' + o._depTxt : '') + '\n' + o.dn;
     g.appendChild(ti);
@@ -3825,9 +3913,9 @@ function renderOrbit(animate) {
   svg.appendChild(el('line', { class: 'orb-axis', x1: 40, y1: CY, x2: OW - 40, y2: CY }));
   svg.appendChild(el('ellipse', { class: 'orb-guide', cx: CX, cy: CY, rx: RX, ry: RY }));
   if (ORB.dense) svg.appendChild(el('ellipse', { class: 'orb-guide', cx: CX, cy: CY, rx: RX * .58, ry: RY * .58 }));
-  svg.appendChild(svgText('orb-axis-lbl', CX - 80, CY - 6, isSub ? '← annonce · export-rtctrl' : '← transit · sort du fabric', { 'text-anchor': 'end' }));
-  svg.appendChild(svgText('orb-axis-lbl', CX + 80, CY - 6, isSub ? 'classifie · import-security →' : 'client · finit sur un EPG →'));
-  svg.appendChild(svgText('orb-axis-lbl', CX, 22, '↑ ' + (isSub ? 'les deux axes' : 'client + transit'), { 'text-anchor': 'middle' }));
+  svg.appendChild(svgText('orb-axis-lbl', CX - 80, CY - 6, isSub ? T('← annonce · export-rtctrl', '← advertises · export-rtctrl') : T('← transit · sort du fabric', '← transit · leaves the fabric'), { 'text-anchor': 'end' }));
+  svg.appendChild(svgText('orb-axis-lbl', CX + 80, CY - 6, isSub ? T('classifie · import-security →', 'classifies · import-security →') : T('client · finit sur un EPG →', 'client · ends on an EPG →')));
+  svg.appendChild(svgText('orb-axis-lbl', CX, 22, '↑ ' + (isSub ? T('les deux axes', 'both axes') : 'client + transit'), { 'text-anchor': 'middle' }));
 
   const gA = el('g', {}), gC = el('g', {});
   svg.append(gA, gC);
@@ -3838,8 +3926,8 @@ function renderOrbit(animate) {
     const path = el('path', { class: 'arc ' + (p.from ? p.kind : 'spoke-' + p.kind) + (quiet ? ' quiet' : ''), d: arcPath(from, p.to.pos) });
     const ti = el('title');
     ti.textContent = p.from
-      ? p.from.f.id + ' annonce ' + DATA.query.value + ' · ' + p.to.f.id + ' le classifie' + (p.kind === 'approx' ? ' (par agrégat)' : '')
-      : p.to.f.id + ' · ' + (p.kind === 'transit' ? 'VLAN de transit, il sort du fabric' : 'VLAN client, il finit sur un EPG');
+      ? p.from.f.id + T(' annonce ', ' advertises ') + DATA.query.value + ' · ' + p.to.f.id + T(' le classifie', ' classifies it') + (p.kind === 'approx' ? T(' (par agrégat)', ' (by aggregate)') : '')
+      : p.to.f.id + ' · ' + (p.kind === 'transit' ? T('VLAN de transit, il sort du fabric', 'transit VLAN, it leaves the fabric') : T('VLAN client, il finit sur un EPG', 'client VLAN, it ends on an EPG'));
     path.appendChild(ti);
     gA.appendChild(path);
     ORB.arcEls.push({ el: path, p });
@@ -3853,22 +3941,22 @@ function renderOrbit(animate) {
   const core = el('g', { class: 'core' });
   core.appendChild(el('circle', { class: 'orb-core-bg', cx: CX, cy: CY, r: 62 }));
   core.appendChild(el('circle', { class: 'orb-core-ring', cx: CX, cy: CY, r: 62 }));
-  core.appendChild(svgText('orb-core-l3', CX, CY - 26, isSub ? 'niveau 3 · préfixe' : 'niveau 2'));
+  core.appendChild(svgText('orb-core-l3', CX, CY - 26, isSub ? T('niveau 3 · préfixe', 'level 3 · prefix') : T('niveau 2', 'level 2')));
   core.appendChild(svgText('orb-core-v mono', CX, CY + 4, String(DATA.query.value)));
   core.appendChild(svgText('orb-core-m', CX, CY + 24,
-    isSub ? ORB.orbit.length + ' fabrics · ' + ORB.paths.length + ' chemins'
+    isSub ? ORB.orbit.length + ' fabrics · ' + ORB.paths.length + T(' chemins', ' paths')
           : ORB.orbit.length + ' fabrics · ' + ORB.orbit.filter(m => m.nRoute).length + ' transit'));
   svg.appendChild(core);
   const vk = vlanCarrying(DSKEY);
   if (vk) svg.appendChild(svgText('orb-core-src', CX, CY + 86,
-    'porté dans les fabriques par le VLAN ' + valueOf(vk), { 'text-anchor': 'middle' }));
+    T('porté dans les fabriques par le VLAN ', 'carried in the fabrics by VLAN ') + valueOf(vk), { 'text-anchor': 'middle' }));
 
   if (ORB.gutter.length) {
     const nCov = ORB.gutter.filter(m => m.covered).length;
     const parts = [];
-    if (ORB.gutter.length - nCov) parts.push('aucune correspondance dans le backup');
-    if (nCov) parts.push('couvertes par la route par défaut seulement');
-    svg.appendChild(svgText('gutter-lbl', 60, OH - 96, 'hors orbite · ' + parts.join(' · ')));
+    if (ORB.gutter.length - nCov) parts.push(T('aucune correspondance dans le backup', 'no match in the backup'));
+    if (nCov) parts.push(T('couvertes par la route par défaut seulement', 'covered by the default route only'));
+    svg.appendChild(svgText('gutter-lbl', 60, OH - 96, T('hors orbite · ', 'out of orbit · ') + parts.join(' · ')));
   }
 
   const CW = ORB.dense ? 138 : 168, CH = ORB.dense ? 34 : 50;
@@ -3878,7 +3966,7 @@ function renderOrbit(animate) {
       class: 'cap', tabindex: '0', role: 'button', 'data-fab': m.i,
       'data-absent': m.present ? 0 : 1,
       'data-covered': m.covered ? 1 : 0,
-      'aria-label': m.f.id + ' — ' + (m.f.summary || '') + ' — activer pour ouvrir la carte de ce fabric'
+      'aria-label': m.f.id + ' — ' + (m.f.summary || '') + T(' — activer pour ouvrir la carte de ce fabric', ' — activate to open this fabric\u2019s map')
     });
     const x = m.pos.x - CW / 2, y = m.pos.y - CH / 2;
     g.appendChild(el('rect', { class: 'capbox', x: x, y: y, width: CW, height: CH, rx: 8 }));
@@ -3886,11 +3974,11 @@ function renderOrbit(animate) {
     if (!ORB.dense) {
       g.appendChild(svgText('capsub', x + 10, y + 32, trunc(m.f.summary || '', 30)));
       const ax = [];
-      if (m.nRoute) ax.push({ t: (isSub ? '↗ annonce ×' + m.nRoute : '↗ transit' + (m.protocols.length ? ' ' + m.protocols.join('/') : '')), c: 'ax-route' });
-      if (m.nSec) ax.push({ t: (isSub ? '↘ classifie ×' + m.nSec : '↘ client'), c: 'ax-sec' });
+      if (m.nRoute) ax.push({ t: (isSub ? T('↗ annonce ×', '↗ advertises ×') + m.nRoute : '↗ transit' + (m.protocols.length ? ' ' + m.protocols.join('/') : '')), c: 'ax-route' });
+      if (m.nSec) ax.push({ t: (isSub ? T('↘ classifie ×', '↘ classifies ×') + m.nSec : '↘ client'), c: 'ax-sec' });
       let ox = x + 10;
       ax.forEach(a => { const t = svgText('capax ' + a.c, ox, y + 44, a.t); g.appendChild(t); ox += a.t.length * 4.6 + 12; });
-      if (m.warn) g.appendChild(svgText('capwarn', x + CW - 8, y + 44, '⚠ double dépl.', { 'text-anchor': 'end' }));
+      if (m.warn) g.appendChild(svgText('capwarn', x + CW - 8, y + 44, T('⚠ double dépl.', '⚠ double depl.'), { 'text-anchor': 'end' }));
     } else if (m.warn) g.appendChild(svgText('capwarn', x + CW - 8, y + 21, '⚠', { 'text-anchor': 'end' }));
     if (m.exact) g.appendChild(el('circle', { class: 'tgt', cx: x + CW - 9, cy: y + 9, r: 2.6, fill: 'var(--color-accent)' }));
     const ti = el('title');
@@ -4076,13 +4164,13 @@ function renderTools() {
   };
   const curFab = (DATA.fabrics || [])[fabIdx] || {};
   if (view === 'carte') {
-    mk('t-over', zmode === 'over' ? 'btn-primary' : 'btn-secondary', 'Vue d’ensemble').onclick = () => { zmode = 'over'; applyZoom(440); };
-    mk('t-loupe', zmode === 'loupe' ? 'btn-primary' : 'btn-secondary', 'Loupe').onclick = () => { zmode = 'loupe'; applyZoom(440); };
-    mk('t-orb', 'btn-primary', '◂ Remonter à l’orbitale <kbd>O</kbd>',
+    mk('t-over', zmode === 'over' ? 'btn-primary' : 'btn-secondary', T('Vue d’ensemble', 'Overview')).onclick = () => { zmode = 'over'; applyZoom(440); };
+    mk('t-loupe', zmode === 'loupe' ? 'btn-primary' : 'btn-secondary', T('Loupe', 'Magnifier')).onclick = () => { zmode = 'loupe'; applyZoom(440); };
+    mk('t-orb', 'btn-primary', T('◂ Remonter à l’orbitale <kbd>O</kbd>', '◂ Back to the orbital <kbd>O</kbd>'),
        'Sortir de la fabrique. C’est le seul moyen d’en changer.').onclick = riseToOrbit;
   } else {
-    mk('t-carte', 'btn-primary', 'Plonger dans <span class="mono">' + esc(curFab.id || '—') + '</span> ▸ <kbd>O</kbd>',
-       'Entrer à l’intérieur de cette fabrique').onclick = () => dropIntoCarte(fabIdx);
+    mk('t-carte', 'btn-primary', T('Plonger dans <span class="mono">', 'Dive into <span class="mono">') + esc(curFab.id || '—') + '</span> ▸ <kbd>O</kbd>',
+       T('Entrer à l’intérieur de cette fabrique', 'Enter this fabric')).onclick = () => dropIntoCarte(fabIdx);
   }
 }
 
@@ -4110,35 +4198,34 @@ function renderFabCur() {
   }
   const d = document.createElement('div');
   d.className = 'fabcur-in';
-  d.innerHTML = '<div class="fabcur-k">Vous êtes dans</div>' +
+  d.innerHTML = '<div class="fabcur-k">' + T('Vous êtes dans', 'You are in') + '</div>' +
     '<div class="fabcur-id mono">' + esc(f.id || '—') + '</div>' +
     '<div class="fabcur-s">' + esc(f.summary || '') + '</div>' +
-    (warn ? '<div class="fabcur-w">⚠ EPG en double déploiement</div>' : '') +
-    (ano ? '<div class="fabcur-w">⚠ encap hors triangle pool/domaine</div>' : '');
+    (warn ? '<div class="fabcur-w">' + T('⚠ EPG en double déploiement', '⚠ EPG deployed both ways') + '</div>' : '') +
+    (ano ? '<div class="fabcur-w">' + T('⚠ encap hors triangle pool/domaine', '⚠ encap outside the pool/domain triangle') + '</div>' : '');
   box.appendChild(d);
   // Routes par defaut repliees : on le DIT, et on ne les deroule qu'au clic.
   const nDef = (f.hits || []).filter(h => h.match === 'default').length;
   if (nDef && !DEFEXP.has(DSKEY)) {
     const eb = document.createElement('button');
     eb.className = 'btn btn-secondary btn-block'; eb.type = 'button';
-    eb.textContent = 'Dérouler ' + (nDef > 1 ? 'les ' + nDef + ' routes par défaut' : 'la route par défaut');
-    eb.title = 'Ce préfixe est couvert par 0.0.0.0/0 (ou ::/0). La chaîne du catch-all '
-      + 'n’est pas déroulée d’office : elle ne dit rien de spécifique au préfixe cherché.';
+    eb.textContent = T('Dérouler ', 'Unfold ') + (nDef > 1 ? T('les ', 'the ') + nDef + T(' routes par défaut', ' default routes') : T('la route par défaut', 'the default route'));
+    eb.title = T('Ce préfixe est couvert par 0.0.0.0/0 (ou ::/0). La chaîne du catch-all n’est pas déroulée d’office : elle ne dit rien de spécifique au préfixe cherché.', 'This prefix is covered by 0.0.0.0/0 (or ::/0). The catch-all chain is not unfolded by default: it says nothing specific about the searched prefix.');
     eb.onclick = flExpandDefaults;
     box.appendChild(eb);
   }
   const b = document.createElement('button');
   b.className = 'btn btn-secondary btn-block'; b.type = 'button';
-  b.innerHTML = '◂ Remonter à l’orbitale <kbd>O</kbd>';
-  b.title = 'La carte ne montre qu’une fabrique. Pour en changer, il faut ressortir.';
+  b.innerHTML = T('◂ Remonter à l’orbitale <kbd>O</kbd>', '◂ Back to the orbital <kbd>O</kbd>');
+  b.title = T('La carte ne montre qu’une fabrique. Pour en changer, il faut ressortir.', 'The map shows one fabric. To change it, rise back out.');
   b.onclick = riseToOrbit;
   box.appendChild(b);
   const others = Math.max(0, (DATA.fabrics || []).length - 1);
   const n = document.createElement('div');
   n.className = 'fabcur-n';
   n.textContent = others
-    ? 'carte mono-fabrique · les ' + others + ' autres fabriques ne se voient que depuis l’orbitale'
-    : 'carte mono-fabrique';
+    ? T('carte mono-fabrique · les ', 'single-fabric map · the ') + others + T(' autres fabriques ne se voient que depuis l’orbitale', ' other fabrics are only visible from the orbital')
+    : T('carte mono-fabrique', 'single-fabric map');
   box.appendChild(n);
 }
 
@@ -4162,13 +4249,13 @@ function renderFabs() {
     const nodes = f.nodes || {};
     for (const dn in nodes) if ((nodes[dn].deployment && nodes[dn].deployment.conflict) || nodes[dn].anomaly) warn = true;
     const nReal = (f.hits || []).filter(h => h.match !== 'default').length;
-    const roles = covered ? 'par défaut'
-      : (f.roles || []).join('+') || (nReal ? nReal + ' corresp.' : '');
+    const roles = covered ? T('par défaut', 'by default')
+      : (f.roles || []).join('+') || (nReal ? nReal + T(' corresp.', ' match(es)') : '');
     b.innerHTML = '<span class="st"></span><span class="id mono">' + esc(f.id) + '</span>' +
-      (warn ? '<span class="wr" title="EPG en double déploiement">⚠</span>' : '') +
+      (warn ? '<span class="wr" title="' + T('EPG en double déploiement', 'EPG deployed both ways') + '">⚠</span>' : '') +
       '<span class="rl">' + esc(roles) + '</span>';
     b.title = f.id + ' · ' + (f.summary || '') + '\n' + ((f.backup && f.backup.file) || '') +
-      '\n(double-clic : plonger dans cette fabrique)';
+      T('\n(double-clic : plonger dans cette fabrique)', '\n(double-click: dive into this fabric)');
     // liste visible seulement dans l'orbitale (E5b) : un clic vise, un double-clic plonge
     b.onclick = () => { fabIdx = i; renderAll(false); paintOrbit(); };
     b.ondblclick = () => dropIntoCarte(i);
@@ -4201,19 +4288,19 @@ function buildTree() {
     for (const o of M.nodes) if (o.lane === 1 && !seen.has(o.dn)) walk(o.dn, 0, 1);
   });
   if (a.length) secs.push({ name: 'Access policies', rows: a });
-  if (b.length) secs.push({ name: (M.fab.roles || []).indexOf('transit') >= 0 ? 'Chaîne logique · L3Out' : 'Chaîne logique', rows: b });
+  if (b.length) secs.push({ name: (M.fab.roles || []).indexOf('transit') >= 0 ? T('Chaîne logique · L3Out', 'Logical chain · L3Out') : T('Chaîne logique', 'Logical chain'), rows: b });
 
   const dep = [];
   M.nodes.filter(o => o.n.kind === 'staticPath' || o.n.kind === 'l3outPath').forEach(o => {
     const d = deployInfo(o); if (!d) return;
     dep.push({ dn: o.dn, depth: 0 });
-    dep.push({ dn: d.ipgDn, depth: 1, fixed: 'IPG', text: d.ipgName || '— aucun IPG (port en accès direct)', dead: !d.ipgDn });
+    dep.push({ dn: d.ipgDn, depth: 1, fixed: 'IPG', text: d.ipgName || T('— aucun IPG (port en accès direct)', '— no IPG (direct access port)'), dead: !d.ipgDn });
     (d.leaves.length ? d.leaves : []).forEach(l => dep.push({ dn: l.dn, depth: 1, fixed: 'LEAF', text: l.n.note || l.n.label }));
     if (!d.leaves.length && d.nodesTxt) dep.push({ dn: null, depth: 1, fixed: 'LEAF', text: d.nodesTxt, dead: true });
     (d.ports.length ? d.ports : []).forEach(p => dep.push({ dn: p.dn, depth: 1, fixed: 'PORT', text: p.n.note || p.n.label }));
     if (!d.ports.length && d.port) dep.push({ dn: null, depth: 1, fixed: 'PORT', text: d.port, dead: true });
   });
-  if (dep.length) secs.push({ name: 'Déploiement physique', rows: dep, e1: true });
+  if (dep.length) secs.push({ name: T('Déploiement physique', 'Physical deployment'), rows: dep, e1: true });
   return secs;
 }
 
@@ -4221,7 +4308,7 @@ function renderTree() {
   const t = $('#tree'); t.innerHTML = ''; FLAT = [];
   const secs = buildTree();
   $('#tree-n').textContent = M ? M.nodes.length + ' objets' : '0';
-  $('#tree-title').textContent = M && M.fab ? 'Chemin complet · ' + M.fab.id : 'Chemin complet';
+  $('#tree-title').textContent = M && M.fab ? T('Chemin complet · ', 'Full path · ') + M.fab.id : T('Chemin complet', 'Full path');
   if (!secs.length) {
     t.innerHTML = '<div class="text-muted" style="font-size:11px;padding:var(--space-3)">Aucun objet dans ce fabric pour cette recherche.</div>';
     return;
@@ -4269,20 +4356,20 @@ function renderPanel() {
   $('#p-cls').textContent = n.cls || '';
   $('#p-note').textContent = n.note || '';
   $('#p-dn').textContent = o.dn;
-  $('#p-attrs-h').textContent = 'Configuration brute · ' + Object.keys(at).length + ' attributs';
-  $('#p-nbrs-h').textContent = 'Voisins';
+  $('#p-attrs-h').textContent = T('Configuration brute · ', 'Raw configuration · ') + Object.keys(at).length + T(' attributs', ' attributes');
+  $('#p-nbrs-h').textContent = T('Voisins', 'Neighbors');
 
   const q = DATA.query;
   const ident = [
-    ['Classe ACI', n.cls || '—'],
-    ['Type', n.clsLabel || KIND_FR[n.kind] || n.kind],
-    ['Nom', n.label],
+    [T('Classe ACI', 'ACI class'), n.cls || '—'],
+    [T('Type', 'Type'), n.clsLabel || KIND_FR[n.kind] || n.kind],
+    [T('Nom', 'Name'), n.label],
     ['Fabric', M.fab.id],
-    n.note ? ['Rôle', n.note] : null,
-    ['Correspond à ' + (q.type === 'vlan' ? 'VLAN ' + q.value : q.value),
-      n.matchesQuery === false ? 'non — autre encapsulation' : (o.target ? 'oui' : '—'), o.target]
+    n.note ? [T('Rôle', 'Role'), n.note] : null,
+    [T('Correspond à ', 'Matches ') + (q.type === 'vlan' ? 'VLAN ' + q.value : q.value),
+      n.matchesQuery === false ? T('non — autre encapsulation', 'no — other encapsulation') : (o.target ? 'oui' : '—'), o.target]
   ];
-  if (o.hit) ident.push(['Correspondance', o.hit.match + (o.hit.role ? ' · ' + o.hit.role : ''), true]);
+  if (o.hit) ident.push([T('Correspondance', 'Match'), o.hit.match + (o.hit.role ? ' · ' + o.hit.role : ''), true]);
   $('#p-ident').innerHTML = kvRows(ident);
 
   const ks = Object.keys(at).sort();
@@ -4290,7 +4377,7 @@ function renderPanel() {
   $('#p-attrs').innerHTML = ks.length
     ? ks.map(k => '<tr' + (hot.has(k) ? ' class="hi"' : '') + '><td class="k mono">' + esc(k) + '</td>' +
         '<td class="v mono">' + esc(at[k]) + '</td></tr>').join('')
-    : '<tr><td class="k">aucun attribut exporté dans ce backup</td></tr>';
+    : '<tr><td class="k">' + T('aucun attribut exporté dans ce backup', 'no attribute exported in this backup') + '</td></tr>';
 
   const box = $('#p-nbrs'); box.innerHTML = '';
 
@@ -4299,7 +4386,7 @@ function renderPanel() {
   if (dep) {
     const head = document.createElement('div');
     head.className = 'pnote';
-    head.innerHTML = 'Point de déploiement · ' + esc(dep.kind === 'vpc' ? 'vPC' : dep.kind) +
+    head.innerHTML = T('Point de déploiement · ', 'Deployment point · ') + esc(dep.kind === 'vpc' ? 'vPC' : dep.kind) +
       (dep.pod ? ' · pod ' + esc(dep.pod) : '') + (dep.encap ? ' · <b>' + esc(dep.encap) + '</b>' : '') +
       (dep.addr ? ' · <b>' + esc(dep.addr) + '</b>' : '');
     box.appendChild(head);
@@ -4322,13 +4409,13 @@ function renderPanel() {
   if (n.deployment) {
     const d = n.deployment, p = document.createElement('div');
     p.className = 'pnote';
-    p.innerHTML = 'Déploiement : <b>' + esc(d.mode) + '</b> · ' + (d.staticPaths || []).length + ' static path · ' +
+    p.innerHTML = T('Déploiement : <b>', 'Deployment: <b>') + esc(d.mode) + '</b> · ' + (d.staticPaths || []).length + ' static path · ' +
       (d.aaepDeploys || []).length + ' via AAEP';
     box.appendChild(p);
     if (d.conflict) {
       const w = document.createElement('div');
       w.className = 'chips';
-      w.innerHTML = '<span class="chip warn">⚠ double déploiement — static path ET AAEP sur le même EPG</span>';
+      w.innerHTML = '<span class="chip warn">' + T('⚠ double déploiement — static path ET AAEP sur le même EPG', '⚠ double deployment — static path AND AAEP on the same EPG') + '</span>';
       box.appendChild(w);
     }
   }
@@ -4337,7 +4424,7 @@ function renderPanel() {
     n.roles.forEach(r => {
       const s = document.createElement('span');
       s.className = 'chip on';
-      s.innerHTML = '<span class="ck">' + esc(r.axis === 'routage' ? '↗ routage' : '↘ sécurité') + '</span>' +
+      s.innerHTML = '<span class="ck">' + esc(r.axis === 'routage' ? T('↗ routage', '↗ routing') : T('↘ sécurité', '↘ security')) + '</span>' +
         '<span class="mono">' + esc(r.scope) + '</span>';
       s.title = (r.gui || '') + ' — ' + (r.sens || '');
       c.appendChild(s);
@@ -4356,8 +4443,8 @@ function renderPanel() {
      lui-même, pas une deuxième représentation à maintenir. */
   if (n.flows && n.flows.length) {
     const DIRL = {
-      'fournit': ['fournit à', '←', false],
-      'consomme': ['consomme de', '→', false],
+      'fournit': [T('fournit à', 'provides to'), '←', false],
+      'consomme': [T('consomme de', 'consumes from'), '→', false],
       'intra-epg': ['intra-EPG', '◦', false],
       'taboo': ['taboo', '✕', true]
     };
@@ -4365,17 +4452,17 @@ function renderPanel() {
     const nC = n.flows.filter(x => x.dir === 'consomme').length;
     const head = document.createElement('div');
     head.className = 'pnote';
-    head.innerHTML = 'Flux · <b>' + nF + '</b> fourni(s) · <b>' + nC + '</b> consommé(s)' +
-      ' — une ligne par vis-à-vis ; cliquer ouvre la preuve (le contrat)';
+    head.innerHTML = T('Flux · <b>', 'Flows · <b>') + nF + T('</b> fourni(s) · <b>', '</b> provided · <b>') + nC + T('</b> consommé(s)', '</b> consumed') +
+      T(' — une ligne par vis-à-vis ; cliquer ouvre la preuve (le contrat)', ' — one line per counterpart; click to open the proof (the contract)');
     box.appendChild(head);
     n.flows.forEach(fl => {
       const d = DIRL[fl.dir] || [fl.dir, '·', false];
       let who, warn = d[2];
       if (fl.peer) who = fl.peer.name;
-      else if (fl.dir === 'fournit') { who = 'personne ne le consomme'; warn = true; }
-      else if (fl.dir === 'consomme') { who = 'personne ne le fournit'; warn = true; }
+      else if (fl.dir === 'fournit') { who = T('personne ne le consomme', 'nobody consumes it'); warn = true; }
+      else if (fl.dir === 'consomme') { who = T('personne ne le fournit', 'nobody provides it'); warn = true; }
       else if (fl.dir === 'taboo') who = fl.contract.name;
-      else who = 'entre membres du même EPG';
+      else who = T('entre membres du même EPG', 'between members of the same EPG');
       const ports = fl.ports.length
         ? fl.ports.slice(0, 5).join(' · ') + (fl.ports.length > 5 ? ' +' + (fl.ports.length - 5) : '')
         : '—';
@@ -4386,10 +4473,10 @@ function renderPanel() {
         '<span class="arw">' + d[1] + '</span>' +
         '<span class="n mono">' + esc(who) + '</span>' +
         '<span class="prt mono">' + esc(ports) + '</span>';
-      b.title = 'contrat ' + fl.contract.name + ' (scope ' + fl.contract.scope + ')' +
-        (fl.peer ? '\nen face : ' + fl.peer.dn : '') +
-        (fl.ports.length ? '\nports : ' + fl.ports.join(', ') : '\naucune entry de filtre dans ce backup') +
-        (M && M.byDn.has(fl.contract.dn) ? '\ncliquer : ouvrir le contrat (subjects → filtres → entries)' : '');
+      b.title = T('contrat ', 'contract ') + fl.contract.name + ' (scope ' + fl.contract.scope + ')' +
+        (fl.peer ? T('\nen face : ', '\nfacing: ') + fl.peer.dn : '') +
+        (fl.ports.length ? T('\nports : ', '\nports: ') + fl.ports.join(', ') : T('\naucune entry de filtre dans ce backup', '\nno filter entry in this backup')) +
+        (M && M.byDn.has(fl.contract.dn) ? T('\ncliquer : ouvrir le contrat (subjects → filtres → entries)', '\nclick: open the contract (subjects → filters → entries)') : '');
       if (M && M.byDn.has(fl.contract.dn)) b.onclick = () => select(fl.contract.dn);
       box.appendChild(b);
     });
@@ -4411,7 +4498,7 @@ function renderPanel() {
   M.edges.forEach(e => { if (e.from === sel) { add(e, 'out'); nb++; } });
   M.edges.forEach(e => { if (e.to === sel) { add(e, 'in'); nb++; } });
   if (!nb && !dep) box.appendChild(Object.assign(document.createElement('div'),
-    { className: 'pnote', textContent: 'objet terminal — aucune relation dans ce backup' }));
+    { className: 'pnote', textContent: T('objet terminal — aucune relation dans ce backup', 'terminal object — no relation in this backup') }));
 
   renderPrefixBtn(o); renderVlanBtn();
 }
@@ -4424,15 +4511,15 @@ function renderPanelFabric() {
   $('#p-cls').textContent = f.status || '';
   $('#p-note').textContent = f.summary || '';
   $('#p-dn').textContent = (f.backup && f.backup.file) || '—';
-  $('#p-attrs-h').textContent = 'Correspondances';
+  $('#p-attrs-h').textContent = T('Correspondances', 'Matches');
   $('#p-nbrs-h').textContent = 'Actions';
   $('#p-ident').innerHTML = kvRows([
     ['Fabric', f.id || '—'],
-    ['Statut', f.status || '—'],
-    ['Rôles du VLAN', (f.roles || []).join(', ') || '—'],
+    [T('Statut', 'Status'), f.status || '—'],
+    [T('Rôles du VLAN', 'VLAN roles'), (f.roles || []).join(', ') || '—'],
     ['Protocoles', (f.protocols || []).join(', ') || '—'],
-    ['Objets résolus', String(Object.keys(f.nodes || {}).length)],
-    ['Backup généré le', (f.backup && f.backup.generatedAt) ? f.backup.generatedAt.replace('T', ' ').replace('Z', ' UTC') : '—']
+    [T('Objets résolus', 'Resolved objects'), String(Object.keys(f.nodes || {}).length)],
+    [T('Backup généré le', 'Backup generated'), (f.backup && f.backup.generatedAt) ? f.backup.generatedAt.replace('T', ' ').replace('Z', ' UTC') : '—']
   ]);
   const hits = f.hits || [];
   $('#p-attrs').innerHTML = hits.length
@@ -4474,14 +4561,14 @@ function renderPrefixBtn(o) {
   b.hidden = false;
   if (p.ds) {
     b.className = 'btn btn-primary';
-    b.innerHTML = 'Où vit <span class="mono">' + esc(p.net) + '</span> ? <kbd>F</kbd>';
-    b.title = 'Basculer en vue orbitale sur ce préfixe (' + p.ds.hits + ' fabrics)';
+    b.innerHTML = T('Où vit <span class="mono">', 'Where does <span class="mono">') + esc(p.net) + T('</span> ? <kbd>F</kbd>', '</span> live? <kbd>F</kbd>');
+    b.title = T('Basculer en vue orbitale sur ce préfixe (', 'Switch to the orbital view on this prefix (') + p.ds.hits + ' fabrics)';
     b.disabled = false;
     b.onclick = () => followPrefix();
   } else {
     b.className = 'btn btn-secondary';
-    b.innerHTML = 'Préfixe <span class="mono">' + esc(p.prefix) + '</span>';
-    b.title = p.net ? 'Aucun jeu de données hors ligne pour ce préfixe' : 'Préfixe non exploitable';
+    b.innerHTML = T('Préfixe <span class="mono">', 'Prefix <span class="mono">') + esc(p.prefix) + '</span>';
+    b.title = p.net ? T('Aucun jeu de données hors ligne pour ce préfixe', 'No offline dataset for this prefix') : T('Préfixe non exploitable', 'Unusable prefix');
     b.disabled = true; b.onclick = null;
   }
 }
@@ -4503,8 +4590,8 @@ function renderVlanBtn() {
   if (!vk) { b.hidden = true; b.onclick = null; return; }
   b.hidden = false;
   b.className = 'btn btn-secondary';
-  b.innerHTML = 'Carte du VLAN <span class="mono">' + esc(valueOf(vk)) + '</span> <kbd>V</kbd>';
-  b.title = 'Le VLAN ' + valueOf(vk) + ' porte ce préfixe dans les fabriques — ouvrir sa carte';
+  b.innerHTML = T('Carte du VLAN <span class="mono">', 'Map of VLAN <span class="mono">') + esc(valueOf(vk)) + '</span> <kbd>V</kbd>';
+  b.title = 'VLAN ' + valueOf(vk) + T(' porte ce préfixe dans les fabriques — ouvrir sa carte', ' carries this prefix in the fabrics — open its map');
   b.onclick = followVlan;
 }
 function followVlan() {
@@ -4541,7 +4628,7 @@ function switchFabric(i, intro) {
   hist = [];
   renderSideMode(); renderTree();
   $('#side-foot').innerHTML = 'Backup <span class="mono">' + esc((f.backup && f.backup.file) || '—') + '</span>';
-  $('#freshness').innerHTML = 'résolu le <span class="mono">' +
+  $('#freshness').innerHTML = T('résolu le <span class="mono">', 'resolved <span class="mono">') +
     esc(((f.backup && f.backup.generatedAt) || '').replace('T', ' ').replace('Z', ' UTC')) + '</span>';
   const svg = renderGraph(!!intro);
   const root = (f.roots || []).find(r => M.byDn.has(r));
@@ -4576,11 +4663,11 @@ function loadDataset(key, opts) {
   let d = null;
   try { d = ensureDataset(key); }
   catch (e) {
-    showError('Le résolveur a échoué sur « ' + valueOf(key) + ' »',
-      String((e && e.message) || e) + ' — l’écran précédent est intact.');
+    showError(T('Le résolveur a échoué sur « ', 'The resolver failed on \u201c') + valueOf(key) + T(' »', '\u201d'),
+      String((e && e.message) || e) + T(' — l’écran précédent est intact.', ' — the previous screen is intact.'));
     return;
   }
-  if (!d) { showError('Résolution impossible', 'Aucune donnée de fabrique chargée pour « ' + valueOf(key) + ' ».'); return; }
+  if (!d) { showError(T('Résolution impossible', 'Resolution impossible'), T('Aucune donnée de fabrique chargée pour « ', 'No fabric data loaded for \u201c') + valueOf(key) + T(' ».', '\u201d.')); return; }
   // le message precedent ne doit pas survivre a l'ecran qu'il commentait :
   // sans ca, F / V / un clic de suggestion redessinaient DERRIERE l'overlay.
   clearError();
@@ -4622,7 +4709,7 @@ function showError(title, detail, sugg) {
   if (sugg && sugg.length) {
     const p = document.createElement('div');
     p.style.marginTop = '10px';
-    p.textContent = 'le plus proche dans les backups :';
+    p.textContent = T('le plus proche dans les backups :', 'closest in the backups:');
     box.appendChild(p);
     const row = document.createElement('div');
     row.className = 'chips';
@@ -4675,9 +4762,9 @@ function nearestNet(net, k) {
 function parseQuery(text) {
   // sans resolveur il n'y a pas d'arithmetique d'adresses : on le dit au lieu
   // de lever sur RES.parseIpNetwork a la premiere frappe.
-  if (!RES) return { err: 'Le résolveur n’est pas chargé', detail: 'La page ne peut rien analyser ni résoudre.' };
+  if (!RES) return { err: T('Le résolveur n’est pas chargé', 'The resolver is not loaded'), detail: T('La page ne peut rien analyser ni résoudre.', 'The page cannot analyze or resolve anything.') };
   const t = String(text == null ? '' : text).trim().replace(/\s+/g, ' ');
-  if (!t) return { err: 'Rien à chercher', detail: 'Tapez un VLAN (100), un préfixe (10.1.1.0/24) ou une adresse (10.1.1.42).' };
+  if (!t) return { err: T('Rien à chercher', 'Nothing to search'), detail: T('Tapez un VLAN (100), un préfixe (10.1.1.0/24) ou une adresse (10.1.1.42).', 'Type a VLAN (100), a prefix (10.1.1.0/24) or an address (10.1.1.42).') };
 
   const mv = /^(?:vlan[\s\-_:]*)?(\d{1,7})$/i.exec(t);
   if (mv) {
@@ -4685,15 +4772,15 @@ function parseQuery(text) {
     if (!(n >= 1 && n <= 4094))
       return {
         err: 'VLAN ' + n + ' hors plage',
-        detail: 'Un VLAN 802.1Q va de 1 à 4094 : ' + n + ' n’en est pas un. Rien n’a été cherché.',
+        detail: T('Un VLAN 802.1Q va de 1 à 4094 : ', 'An 802.1Q VLAN goes from 1 to 4094: ') + n + T(' n’en est pas un. Rien n’a été cherché.', ' is not one. Nothing was searched.'),
         sugg: nearestVlan(Math.min(4094, Math.max(1, n)), 5)
       };
     return { type: 'vlan', n: n, key: vlanKey(n), label: 'VLAN ' + n };
   }
   if (/^vlan/i.test(t))
     return {
-      err: '« ' + t + ' » n’est pas un numéro de VLAN',
-      detail: 'Après « vlan », il faut un nombre entier de 1 à 4094. Exemples : 100, vlan 100, vlan-100.',
+      err: '« ' + t + T(' » n’est pas un numéro de VLAN', ' » is not a VLAN number'),
+      detail: T('Après « vlan », il faut un nombre entier de 1 à 4094. Exemples : 100, vlan 100, vlan-100.', 'After “vlan”, an integer from 1 to 4094 is expected. Examples: 100, vlan 100, vlan-100.'),
       sugg: nearestVlan(100, 5)
     };
 
@@ -4702,29 +4789,29 @@ function parseQuery(text) {
     const ap = t.slice(0, slash), pp = t.slice(slash + 1);
     const ip = RES.parseIpNetwork(ap, false);
     if (!ip)
-      return { err: 'Préfixe malformé : ' + t, detail: '« ' + ap + ' » n’est pas une adresse IP valide.' };
+      return { err: T('Préfixe malformé : ', 'Malformed prefix: ') + t, detail: '« ' + ap + T(' » n’est pas une adresse IP valide.', ' » is not a valid IP address.') };
     // /24 : longueur. /255.255.255.0 : masque v4, forme qu'ipaddress accepte et
     // qu'un backup peut contenir — on ne la refuse donc pas comme « longueur ».
     if (/^\d+$/.test(pp) ? +pp > ip.bits : !(ip.version === 4 && RES.parseIpNetwork(t, false)))
       return {
-        err: 'Longueur de préfixe invalide : /' + pp,
-        detail: 'Pour une adresse IPv' + ip.version + ', la longueur va de 0 à ' + ip.bits +
+        err: T('Longueur de préfixe invalide : /', 'Invalid prefix length: /') + pp,
+        detail: T('Pour une adresse IPv', 'For an IPv') + ip.version + T(', la longueur va de 0 à ', ' address, the length goes from 0 to ') + ip.bits +
           (ip.version === 4 ? ' (ou un masque contigu, 255.255.255.0).' : '.')
       };
     const net = RES.parseIpNetwork(t, false);
-    if (!net) return { err: 'Préfixe malformé : ' + t, detail: 'Forme attendue : 10.1.1.0/24.' };
+    if (!net) return { err: T('Préfixe malformé : ', 'Malformed prefix: ') + t, detail: T('Forme attendue : 10.1.1.0/24.', 'Expected form: 10.1.1.0/24.') };
     const k = RES.netToString(net);
     return {
-      type: 'subnet', net: net, key: subnetKey(k), value: k, label: 'préfixe ' + k,
-      note: k !== t ? 'normalisé en ' + k : null
+      type: 'subnet', net: net, key: subnetKey(k), value: k, label: T('préfixe ', 'prefix ') + k,
+      note: k !== t ? T('normalisé en ', 'normalized to ') + k : null
     };
   }
 
   const ip = RES.parseIpNetwork(t, false);
   if (!ip)
     return {
-      err: '« ' + t + ' » n’est ni un VLAN, ni un préfixe, ni une adresse',
-      detail: 'Attendu : un numéro de VLAN (100), un préfixe (10.1.1.0/24) ou une adresse seule (10.1.1.42).'
+      err: '« ' + t + T(' » n’est ni un VLAN, ni un préfixe, ni une adresse', ' » is neither a VLAN, nor a prefix, nor an address'),
+      detail: T('Attendu : un numéro de VLAN (100), un préfixe (10.1.1.0/24) ou une adresse seule (10.1.1.42).', 'Expected: a VLAN number (100), a prefix (10.1.1.0/24) or a bare address (10.1.1.42).')
     };
   let best = null;
   PFX_IX.forEach(e => {
@@ -4734,22 +4821,22 @@ function parseQuery(text) {
   });
   if (!best)
     return {
-      err: 'Aucun préfixe ne contient ' + t,
-      detail: 'Aucun subnet de bridge domain ni préfixe externe des ' + NFAB + ' fabriques ne couvre cette adresse.',
+      err: T('Aucun préfixe ne contient ', 'No prefix contains ') + t,
+      detail: T('Aucun subnet de bridge domain ni préfixe externe des ', 'No bridge domain subnet or external prefix of the ') + NFAB + T(' fabriques ne couvre cette adresse.', ' fabrics covers this address.'),
       sugg: nearestNet(ip, 5)
     };
   // Une adresse que SEULE la route par defaut couvre n'est pas « trouvee » :
   // repondre 0.0.0.0/0 sans le dire ferait croire a une correspondance.
   if (best.net.prefix === 0)
     return {
-      err: 'Aucun préfixe spécifique ne contient ' + t,
-      detail: 'Seule la route par défaut ' + best.k + ' couvre cette adresse dans les ' + NFAB +
-        ' fabriques. Aucun subnet de bridge domain ni préfixe externe ne la porte.',
+      err: T('Aucun préfixe spécifique ne contient ', 'No specific prefix contains ') + t,
+      detail: T('Seule la route par défaut ', 'Only the default route ') + best.k + T(' couvre cette adresse dans les ', ' covers this address in the ') + NFAB +
+        T(' fabriques. Aucun subnet de bridge domain ni préfixe externe ne la porte.', ' fabrics. No bridge domain subnet or external prefix carries it.'),
       sugg: [best.cat].concat(nearestNet(ip, 4))
     };
   return {
-    type: 'subnet', net: best.net, key: best.cat.key, value: best.k, label: 'préfixe ' + best.k,
-    note: 'préfixe le plus spécifique contenant ' + t
+    type: 'subnet', net: best.net, key: best.cat.key, value: best.k, label: T('préfixe ', 'prefix ') + best.k,
+    note: T('préfixe le plus spécifique contenant ', 'most specific prefix containing ') + t
   };
 }
 
@@ -4762,17 +4849,17 @@ function runQuery(text) {
   let d = null;
   try { d = ensureDataset(q.key); }
   catch (e) {
-    showError('Le résolveur a échoué sur ' + q.label,
-      String((e && e.message) || e) + ' — l’écran précédent est intact, rien n’a changé.');
+    showError(T('Le résolveur a échoué sur ', 'The resolver failed on ') + q.label,
+      String((e && e.message) || e) + T(' — l’écran précédent est intact, rien n’a changé.', ' — the previous screen is intact, nothing changed.'));
     return;
   }
-  if (!d) { showError('Résolution impossible', 'Les données des fabriques ne sont pas chargées.'); return; }
+  if (!d) { showError(T('Résolution impossible', 'Resolution impossible'), T('Les données des fabriques ne sont pas chargées.', 'The fabric data is not loaded.')); return; }
   if (!hasHit(d)) {
     showError(q.label + ' : aucune correspondance',
-      'Cherché dans les ' + NFAB + ' fabriques (' + FABRICS.map(f => f.id).join(', ') + '). ' +
+      T('Cherché dans les ', 'Searched across the ') + NFAB + T(' fabriques (', ' fabrics (') + FABRICS.map(f => f.id).join(', ') + '). ' +
       (q.type === 'vlan'
         ? 'Ce VLAN n’est dans aucun pool, sur aucun EPG, sur aucune interface de L3Out.'
-        : 'Aucun subnet de bridge domain ni préfixe externe ne correspond, même par agrégat.'),
+        : T('Aucun subnet de bridge domain ni préfixe externe ne correspond, même par agrégat.', 'No bridge domain subnet or external prefix matches, even by aggregate.')),
       q.type === 'vlan' ? nearestVlan(q.n, 5) : nearestNet(q.net, 5));
     return;
   }
@@ -4810,20 +4897,20 @@ function openQ(txt) {
     qFiltered = [];
     ql.innerHTML = '<div class="qopt" style="cursor:default"><span class="t">⚠</span><span>' + esc(q.err) + '</span></div>';
   } else if (!qFiltered.length) {
-    ql.innerHTML = '<div class="qopt" style="cursor:default">aucun VLAN ni préfixe des backups ne ressemble à « ' + esc(txt) + ' »</div>';
+    ql.innerHTML = '<div class="qopt" style="cursor:default">' + T('aucun VLAN ni préfixe des backups ne ressemble à « ', 'no VLAN or prefix in the backups looks like \u201c') + esc(txt) + T(' »', '\u201d') + '</div>';
   } else {
     qFiltered.forEach((c, i) => {
       const b = document.createElement('button');
       b.className = 'qopt'; b.type = 'button'; b.dataset.cur = i === qCur ? 1 : 0; b.setAttribute('role', 'option');
       b.innerHTML = '<span class="t">' + esc(c.kindLabel) + '</span><span class="mono">' + esc(c.value) + '</span>' +
-        '<span class="d">' + (c.hits == null ? 'à résoudre' : c.hits + '/' + c.total + ' fabrics') +
+        '<span class="d">' + (c.hits == null ? T('à résoudre', 'to resolve') : c.hits + '/' + c.total + ' fabrics') +
         (c.role ? ' · ' + esc(c.role) : '') + '</span>';
       b.onmousedown = ev => { ev.preventDefault(); pickQ(i); };
       ql.appendChild(b);
     });
     if (list.length > QMAX)
       ql.insertAdjacentHTML('beforeend',
-        '<div class="qopt" style="cursor:default">… ' + (list.length - QMAX) + ' autres — précisez la recherche</div>');
+        '<div class="qopt" style="cursor:default">… ' + (list.length - QMAX) + T(' autres — précisez la recherche', ' more — narrow the search') + '</div>');
   }
   ql.hidden = false; qi.setAttribute('aria-expanded', 'true');
 }
@@ -4871,7 +4958,7 @@ function setPh(v) {
   ph = Math.max(MINP, Math.min(max, v));
   document.documentElement.style.setProperty('--ph', ph + 'px');
   panel.classList.toggle('closed', ph <= 44);
-  $('#btn-panel').textContent = ph <= 44 ? 'Détail ▴' : 'Masquer ▾';
+  $('#btn-panel').textContent = ph <= 44 ? T('Détail ▴', 'Detail ▴') : T('Masquer ▾', 'Hide ▾');
   $('#btn-panel').setAttribute('aria-expanded', ph > 44 ? 'true' : 'false');
   if (raf) cancelAnimationFrame(raf);
   raf = requestAnimationFrame(() => { raf = null; if (view === 'carte') applyZoom(0); });
@@ -5007,12 +5094,12 @@ function flStampSource() {
   if (!badge || !NFAB) return;
   const base = (badge.textContent || '').split('  ·  ')[0];
   const quand = FL_SRC_META
-    ? ' du ' + String(FL_SRC_META).replace('T', ' ').replace('Z', ' UTC')
+    ? T(' du ', ' of ') + String(FL_SRC_META).replace('T', ' ').replace('Z', ' UTC')
     : '';
-  badge.textContent = base + '  ·  ' + NFAB + ' fabrique' + (NFAB > 1 ? 's' : '') + quand;
-  badge.title = 'Repère de version de la page, puis les données chargées : '
-              + 'nombre de fabriques' + (FL_SRC_META
-                ? ' et date de leur extraction (fl_extract.py sur les backups).'
+  badge.textContent = base + '  ·  ' + NFAB + T(' fabrique', ' fabric') + (NFAB > 1 ? 's' : '') + quand;
+  badge.title = T('Repère de version de la page, puis les données chargées : ', 'Page version marker, then the loaded data: ')
+              + T('nombre de fabriques', 'number of fabrics') + (FL_SRC_META
+                ? T(' et date de leur extraction (fl_extract.py sur les backups).', ' and the date they were extracted (fl_extract.py on the backups).')
                 : '.');
 }
 
@@ -5021,20 +5108,20 @@ if (FL_EMPTY && !BOOT_ERR) {
   // Webui livré vide : on montre l'écran d'accueil, pas une erreur.
   flShowWelcome();
 } else if (BOOT_ERR || !FABRICS || !CATALOG.length) {
-  showError('Les données des fabriques n’ont pas pu être chargées',
+  showError(T('Les données des fabriques n’ont pas pu être chargées', 'The fabric data could not be loaded'),
     BOOT_ERR ? String(BOOT_ERR.message || BOOT_ERR)
-             : 'Le fichier contient ' + NFAB + ' fabrique(s) et aucun VLAN ni préfixe exploitable.');
+             : T('Le fichier contient ', 'The file contains ') + NFAB + T(' fabrique(s) et aucun VLAN ni préfixe exploitable.', ' fabric(s) and no usable VLAN or prefix.'));
 } else {
   const start = defaultKey();
   try {
     DATA = ensureDataset(start); DSKEY = start;
-    if (!DATA) throw new Error('le résolveur n’a rien renvoyé pour « ' + String(start) + ' »');
+    if (!DATA) throw new Error(T('le résolveur n’a rien renvoyé pour « ', 'the resolver returned nothing for \u201c') + String(start) + T(' »', '\u201d'));
     renderAll(true);
     setView('carte', { animate: false });
   } catch (e) {
     DATA = null; DSKEY = null;   // etat coherent : les raccourcis se taisent
-    showError('Le résolveur a échoué au démarrage', String((e && e.message) || e) +
-      ' — tapez « / » pour chercher un autre VLAN ou un autre préfixe.');
+    showError(T('Le résolveur a échoué au démarrage', 'The resolver failed at startup'), String((e && e.message) || e) +
+      T(' — tapez « / » pour chercher un autre VLAN ou un autre préfixe.', ' — type “/” to search another VLAN or prefix.'));
   }
   // Le badge #fl-build est inséré APRÈS ce script dans le DOM : on attend donc
   // qu'il existe pour y inscrire la provenance des données, sinon $('#fl-build')
@@ -5067,15 +5154,15 @@ if (FL_EMPTY && !BOOT_ERR) {
    nouvelles données. */
 function flLoadFile(file, onErr) {
   const rd = new FileReader();
-  rd.onerror = () => onErr && onErr('lecture du fichier impossible');
+  rd.onerror = () => onErr && onErr(T('lecture du fichier impossible', 'could not read the file'));
   rd.onload = () => {
     let obj;
     try { obj = JSON.parse(rd.result); }
-    catch (e) { return onErr && onErr('ce fichier n’est pas un JSON valide'); }
+    catch (e) { return onErr && onErr(T('ce fichier n’est pas un JSON valide', 'this file is not valid JSON')); }
     if (!obj || !Array.isArray(obj.fabrics) || !obj.fabrics.length)
-      return onErr && onErr('ce fichier ne contient aucune fabrique — attendu : le fabriclens-data.json produit par « python3 fl_extract.py »');
+      return onErr && onErr(T('ce fichier ne contient aucune fabrique — attendu : le fabriclens-data.json produit par « python3 fl_extract.py »', 'this file contains no fabric — expected: the fabriclens-data.json produced by \u201cpython3 fl_extract.py\u201d'));
     try { name = FL_NAME_TAG + rd.result; }
-    catch (e) { return onErr && onErr('impossible de garder les données (' + e.message + ')'); }
+    catch (e) { return onErr && onErr(T('impossible de garder les données (', 'could not keep the data (') + e.message + ')'); }
     location.reload();
   };
   rd.readAsText(file);
@@ -5103,23 +5190,23 @@ function flShowWelcome() {
     '<div class="card">' +
       '<div class="fw-logo">FL</div>' +
       '<h2>Fabric Lens</h2>' +
-      '<p>Charge un export de fabriques pour commencer.<br>' +
-      'Aucune donnée n’est chargée pour l’instant.</p>' +
+      '<p>' + T('Charge un export de fabriques pour commencer.', 'Load a fabrics export to get started.') + '<br>' +
+      T('Aucune donnée n’est chargée pour l’instant.', 'No data is loaded yet.') + '</p>' +
       '<div class="drop" id="fw-drop" tabindex="0" role="button" ' +
-        'aria-label="Choisir le fichier ou le dossier des fabriques">' +
-        '<div class="big">Cliquer pour choisir un fichier</div>' +
-        '<div class="sub">ou glisser-déposer le fichier  ·  ou un dossier entier</div>' +
+        'aria-label="' + T('Choisir le fichier ou le dossier des fabriques', 'Choose the fabrics file or folder') + '">' +
+        '<div class="big">' + T('Cliquer pour choisir un fichier', 'Click to choose a file') + '</div>' +
+        '<div class="sub">' + T('ou glisser-déposer le fichier  ·  ou un dossier entier', 'or drag and drop the file  ·  or a whole folder') + '</div>' +
       '</div>' +
       '<div style="display:flex;gap:8px;justify-content:center;margin-bottom:4px">' +
-        '<button class="btn btn-secondary" id="fw-pick-file" type="button">Un fichier…</button>' +
-        '<button class="btn btn-secondary" id="fw-pick-dir" type="button">Un dossier…</button>' +
+        '<button class="btn btn-secondary" id="fw-pick-file" type="button">' + T('Un fichier…', 'A file…') + '</button>' +
+        '<button class="btn btn-secondary" id="fw-pick-dir" type="button">' + T('Un dossier…', 'A folder…') + '</button>' +
       '</div>' +
       '<div class="fw-err" id="fw-err"></div>' +
       '<input type="file" id="fw-file" accept=".json,application/json" hidden>' +
       '<input type="file" id="fw-dir" webkitdirectory directory hidden>' +
-      '<div class="fw-hint">Ce fichier est produit sur la RHEL par ' +
-        '<code>fl_extract.py --bundle</code> et rapatrié par le .bat. ' +
-        'Rien ne transite par le réseau ici : le fichier est lu localement.</div>' +
+      '<div class="fw-hint">' + T('Ce fichier est produit sur la RHEL par ', 'This file is produced on the RHEL box by ') +
+        '<code>fl_extract.py --bundle</code>' + T(' et rapatrié par le .bat. ', ' and brought back by the .bat. ') +
+        T('Rien ne transite par le réseau ici : le fichier est lu localement.', 'Nothing crosses the network here: the file is read locally.') + '</div>' +
     '</div>';
   document.body.appendChild(w);
 
@@ -5320,5 +5407,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 19:01 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 19:41 &#183; 437e04</span>
 <!-- FL:END stamp -->
