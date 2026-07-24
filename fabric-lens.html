@@ -665,6 +665,8 @@ kbd {
 .nbr .rel { font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--color-neutral-600); white-space: nowrap; }
 .nbr .arw { color: var(--color-accent-600); flex: none; }
 .nbr .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nbr .prt { margin-left: auto; flex: none; font-size: 9.5px; color: var(--color-accent-300); white-space: nowrap; }
+.nbr[data-warn="1"] .n, .nbr[data-warn="1"] .arw { color: var(--fl-warn); }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; }
 /* une requete de 200 caracteres ne doit pas elargir le document */
 .empty, #fl-err, .empty .mono { overflow-wrap: anywhere; word-break: break-word; }
@@ -2124,6 +2126,126 @@ function applyAdvert(fab, bd, sub, net, g, sDn, hit) {
   hit.routage = verdict === "annonce";
 }
 
+/** Les ports ouverts par un contrat : chaque vzEntry de chaque filtre de
+ *  chaque subject, en libelles courts dedupliques ("tcp/443", "icmp", "any").
+ *  C'est le RESUME d'un flux — la chaine subject/filtre/entry reste la preuve,
+ *  navigable dans le graphe. */
+function contractPorts(fab, ctr) {
+  const ports = [];
+  const seen = new Set();
+  for (const subj of fab.kids(ctr.dn, "vzSubj")) {
+    for (const rf of fab.kids(subj.dn, "vzRsSubjFiltAtt")) {
+      const flt = fab.inTenant(ctr.dn, "vzFilter", rf.a.tnVzFilterName);
+      if (!flt) continue;
+      for (const ent of fab.kids(flt.dn, "vzEntry")) {
+        const a = ent.a;
+        let p;
+        if (truthy(a.prot) && a.prot !== "unspecified") p = S(a.prot);
+        else if (truthy(a.etherT) && a.etherT !== "unspecified") p = S(a.etherT);
+        else p = "any";
+        if (truthy(a.dFromPort) && a.dFromPort !== "unspecified") {
+          p += "/" + S(a.dFromPort);
+          if (truthy(a.dToPort) && a.dToPort !== a.dFromPort && a.dToPort !== "unspecified")
+            p += "-" + S(a.dToPort);
+        }
+        if (!seen.has(p)) { seen.add(p); ports.push(p); }
+      }
+    }
+  }
+  return ports;
+}
+
+function peerKindOf(mo) {
+  if (mo.c === "l3extInstP") return "extEpg";
+  if (mo.c === "fvESg") return "esg";
+  if (mo.c === "vzAny") return "vzAny";
+  return "epg";
+}
+
+/** Qui est EN FACE d'un contrat, dans une direction donnee : les EPG/ESG/
+ *  ext-EPG porteurs d'un fvRsProv/fvRsCons resolvant vers CE contrat, plus le
+ *  vzAny du VRF (vzRsAnyToProv/Cons) — "tout le VRF" est une facade qu'il faut
+ *  montrer, pas cacher. */
+function contractPeers(fab, ctr, dirCls) {
+  const peers = [];
+  for (const rel of fab.cls(dirCls)) {
+    if (fab.inTenant(rel.dn, "vzBrCP", rel.a.tnVzBrCPName) !== ctr) continue;
+    const owner = fab.byDn.get(rnParent(rel.dn));
+    if (owner) peers.push(owner);
+  }
+  const anyCls = dirCls === "fvRsProv" ? "vzRsAnyToProv" : "vzRsAnyToCons";
+  for (const rel of fab.cls(anyCls)) {
+    if (fab.inTenant(rel.dn, "vzBrCP", rel.a.tnVzBrCPName) !== ctr) continue;
+    const any = fab.byDn.get(rnParent(rel.dn));
+    if (any) peers.push(any);
+  }
+  return peers;
+}
+
+/** Les FLUX d'un EPG/ESG/ext-EPG : « qui parle a qui, sur quels ports ».
+ *  Une ligne par (direction, EPG d'en face, contrat), dedupliquee — jamais le
+ *  produit cartesien contrat x subject x filtre, qui est la PREUVE et reste
+ *  dans le graphe. Un contrat sans personne en face est dit tel quel (peer
+ *  null) : c'est une information, pas un cas d'erreur. Les exceptions qui
+ *  changent la lecture (intra-EPG, taboo) sont des flux a part entiere. */
+function computeFlows(fab, ownerDn) {
+  const flows = [];
+  const seen = new Set();
+  const peerInfo = (mo) => {
+    const kind = peerKindOf(mo);
+    let name = S(getd(mo.a, "name", "?"));
+    if (kind === "vzAny") {
+      const vrf = fab.byDn.get(rnParent(mo.dn));
+      name = "tout le VRF " + (vrf ? S(getd(vrf.a, "name", "?")) : "?") + " (vzAny)";
+    }
+    return { dn: mo.dn, kind, name, tenant: Fabric.tenantOf(mo.dn) };
+  };
+  for (const [cls, dir, peerCls] of [
+    ["fvRsProv", "fournit", "fvRsCons"],
+    ["fvRsCons", "consomme", "fvRsProv"],
+  ]) {
+    for (const rel of fab.kids(ownerDn, cls)) {
+      const ctr = fab.inTenant(ownerDn, "vzBrCP", rel.a.tnVzBrCPName);
+      if (!ctr) continue;
+      const contract = { dn: ctr.dn, name: S(getd(ctr.a, "name", "?")), scope: S(getd(ctr.a, "scope", "context")) };
+      const ports = contractPorts(fab, ctr);
+      const peers = contractPeers(fab, ctr, peerCls).filter((p) => p.dn !== ownerDn);
+      if (!peers.length) {
+        const k = dir + "|" + ctr.dn + "|";
+        if (!seen.has(k)) { seen.add(k); flows.push({ dir, peer: null, contract, ports }); }
+        continue;
+      }
+      for (const p of peers) {
+        const k = dir + "|" + ctr.dn + "|" + p.dn;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        flows.push({ dir, peer: peerInfo(p), contract, ports });
+      }
+    }
+  }
+  for (const rel of fab.kids(ownerDn, "fvRsIntraEpg")) {
+    const ctr = fab.inTenant(ownerDn, "vzBrCP", rel.a.tnVzBrCPName);
+    if (!ctr) continue;
+    flows.push({
+      dir: "intra-epg", peer: null,
+      contract: { dn: ctr.dn, name: S(getd(ctr.a, "name", "?")), scope: S(getd(ctr.a, "scope", "context")) },
+      ports: contractPorts(fab, ctr),
+    });
+  }
+  for (const rel of fab.kids(ownerDn, "fvRsProtBy")) {
+    const tb = fab.inTenant(ownerDn, "vzTaboo", rel.a.tnVzTabooName);
+    if (!tb) continue;
+    // vzTSubj/vzRsDenyRule ne sont pas extraits : le taboo est nomme, ses
+    // regles precises restent dans l'APIC. Le dire vaut mieux que le taire.
+    flows.push({
+      dir: "taboo", peer: null,
+      contract: { dn: tb.dn, name: S(getd(tb.a, "name", "?")), scope: "taboo" },
+      ports: [],
+    });
+  }
+  return flows;
+}
+
 /** Contrats fournis/consommes par un EPG, ESG ou ext-EPG.
  *  Les classes porteuses sont ENUMEREES explicitement : l3extInstP herite de
  *  extnw:EPg et non de fv:EPg, et mgmtInstP ne porte NI fvRsProv NI fvRsCons.
@@ -2142,6 +2264,10 @@ function resolveContracts(fab, ownerDn, g, ownerNodeDn) {
       resolveContractDetail(fab, ctr, g, cDn);
     }
   }
+  // Les flux de cet objet : le resume « qui parle, sur quels ports », porte
+  // par le noeud pour que le panneau de detail les affiche sans recalcul.
+  const flows = computeFlows(fab, ownerDn);
+  if (flows.length) g.nodes.get(ownerNodeDn).flows = flows;
 }
 
 function resolveContractDetail(fab, ctr, g, cDn) {
@@ -3878,6 +4004,51 @@ function renderPanel() {
     box.appendChild(c);
   }
 
+  /* ── Les flux : qui parle à cet objet, sur quels ports. Une ligne par
+     (direction, EPG d'en face, contrat) — le résumé. Cliquer ouvre le
+     contrat : la preuve (subjects → filtres → entries) est le graphe
+     lui-même, pas une deuxième représentation à maintenir. */
+  if (n.flows && n.flows.length) {
+    const DIRL = {
+      'fournit': ['fournit à', '←', false],
+      'consomme': ['consomme de', '→', false],
+      'intra-epg': ['intra-EPG', '◦', false],
+      'taboo': ['taboo', '✕', true]
+    };
+    const nF = n.flows.filter(x => x.dir === 'fournit').length;
+    const nC = n.flows.filter(x => x.dir === 'consomme').length;
+    const head = document.createElement('div');
+    head.className = 'pnote';
+    head.innerHTML = 'Flux · <b>' + nF + '</b> fourni(s) · <b>' + nC + '</b> consommé(s)' +
+      ' — une ligne par vis-à-vis ; cliquer ouvre la preuve (le contrat)';
+    box.appendChild(head);
+    n.flows.forEach(fl => {
+      const d = DIRL[fl.dir] || [fl.dir, '·', false];
+      let who, warn = d[2];
+      if (fl.peer) who = fl.peer.name;
+      else if (fl.dir === 'fournit') { who = 'personne ne le consomme'; warn = true; }
+      else if (fl.dir === 'consomme') { who = 'personne ne le fournit'; warn = true; }
+      else if (fl.dir === 'taboo') who = fl.contract.name;
+      else who = 'entre membres du même EPG';
+      const ports = fl.ports.length
+        ? fl.ports.slice(0, 5).join(' · ') + (fl.ports.length > 5 ? ' +' + (fl.ports.length - 5) : '')
+        : '—';
+      const b = document.createElement('button');
+      b.className = 'nbr'; b.type = 'button';
+      if (warn) b.dataset.warn = 1;
+      b.innerHTML = '<span class="rel">' + esc(d[0]) + '</span>' +
+        '<span class="arw">' + d[1] + '</span>' +
+        '<span class="n mono">' + esc(who) + '</span>' +
+        '<span class="prt mono">' + esc(ports) + '</span>';
+      b.title = 'contrat ' + fl.contract.name + ' (scope ' + fl.contract.scope + ')' +
+        (fl.peer ? '\nen face : ' + fl.peer.dn : '') +
+        (fl.ports.length ? '\nports : ' + fl.ports.join(', ') : '\naucune entry de filtre dans ce backup') +
+        (M && M.byDn.has(fl.contract.dn) ? '\ncliquer : ouvrir le contrat (subjects → filtres → entries)' : '');
+      if (M && M.byDn.has(fl.contract.dn)) b.onclick = () => select(fl.contract.dn);
+      box.appendChild(b);
+    });
+  }
+
   const add = (e, dir) => {
     const other = M.byDn.get(dir === 'out' ? e.to : e.from);
     if (!other) return;
@@ -4803,5 +4974,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 17:27 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 17:34 &#183; 437e04</span>
 <!-- FL:END stamp -->
