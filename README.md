@@ -47,57 +47,22 @@ fonctionne toujours mais n'est plus le flux recommandé.
 
 ## Ce qui a coûté cher à découvrir
 
-Consigné dans les fichiers, mais résumé ici — ce sont des pièges qui reviendront.
+Ce que les vrais backups ont imposé, et qu'aucune documentation ne disait :
 
-**Un export APIC ne porte ni `dn` ni `rn` sur les objets enfants.** Mesuré sur un
-backup réel : **64 objets sur 4 068** ont un `dn`. Tout le reste est reconstruit
-depuis les règles de nommage ACI (`RN_TEMPLATES`), dérivées automatiquement de
-vrais DN puis vérifiées par round-trip 467/467.
-
-**`format=json|xml` ne change que l'extension des membres**, pas leur structure.
-Un extracteur qui ne lirait que le JSON ignorerait silencieusement un backup entier.
-
-**Un export contient des annexes sensibles** — `idconfig/` (numéros de série),
-`dhcpconfig/` (TEP pool). Seuls les membres dont la racine est `polUni` ou l'un de
-ses enfants sont retenus ; le reste est écarté et compté.
-
-**Un EPG peut être déployé des deux façons à la fois** — static path *et* AAEP.
-Sur 5 backups réels, 3 étaient dans ce cas pour un même VLAN. Ne retenir que le
-premier mode rencontré était un mensonge.
-
-**Un VLAN n'est pas toujours un VLAN client.** Il peut porter une interface de
-L3Out avec un peering BGP/OSPF vers un équipement externe. La recherche le dit.
-
-**`crypto.subtle` n'existe qu'en contexte sécurisé** (HTTPS ou localhost). Une
-application ouverte en `file://` ne peut pas en dépendre — d'où le SHA-256 en JS pur.
-
-**Les noms de classes CSS génériques entrent en collision.** L'animation
-d'ouverture utilisait `.row`, que l'application définit déjà à `height: 17px` —
-les étages étaient écrasés. Tout le CSS de l'intro est préfixé `f*`.
+- **Un export APIC ne porte ni `dn` ni `rn` sur les objets enfants.** Mesuré :
+  64 objets sur 4 068. Tout est reconstruit depuis les règles de nommage ACI,
+  vérifiées par round-trip.
+- **`format=json|xml` ne change que l'extension** — ne lire que le JSON
+  ignorerait un backup entier.
+- **Un export embarque des annexes sensibles** (numéros de série, TEP pool) ;
+  seuls les objets issus de `polUni` sont retenus.
+- **Un EPG peut être déployé par static path ET par AAEP à la fois** — l'écran
+  le signale au lieu de n'en montrer qu'un.
+- **Un VLAN peut être un transit** : sous-interface de L3Out avec peering BGP.
 
 ## Vérification
 
-Le résolveur JavaScript est une réécriture du Python. Les deux doivent donner
-**exactement** le même graphe.
-
-```bash
-node tests/diff_resolveur.mjs    # 56 requêtes sur données réelles
-node tests/diff_ipv6.mjs         # 16 requêtes IPv6 + bornes IPv4
-```
-
-Au total **5 782 nœuds et 5 597 arêtes** comparés, 0 écart.
-
-L'application se vérifie aussi elle-même, chez l'utilisateur : `resolve.py --digests`
-calcule l'empreinte de chaque requête possible, la page recalcule et compare. Le
-résultat s'affiche en bas à droite (« vérifié 78/78 »). Tout se passe sur la machine
-du client, rien n'en sort — une empreinte ne permet de reconstituer ni DN, ni IP,
-ni nom de tenant.
-
-Les jeux de données et les références ne sont pas versionnés (voir `.gitignore`) :
-ils se régénèrent avec `fl_extract.py` puis `resolve.py --digests`.
-
-## Design
-
-Design system **Nocturne**, importé de Claude Design. `design/nocturne.css` est la
-source de vérité : toutes les couleurs, espacements et rayons viennent de ses
-variables. Voir `docs/design-spec.md`.
+En bas à droite de l'app, « vérifié 78/78 » signifie que le résolveur du
+navigateur donne exactement les mêmes réponses que le résolveur Python, sur
+tes données. Le contrôle tourne chez toi, rien n'en sort — une empreinte ne
+permet de reconstituer ni DN, ni IP, ni nom de tenant.

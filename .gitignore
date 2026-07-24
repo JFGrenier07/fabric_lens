@@ -44,3 +44,17 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# ── Dev : hors du depot GitHub, garde en local ──────────────────────────────
+# Retire volontairement de GitHub : le depot ne montre que ce qu'un usager
+# touche. Ces fichiers restent sur le disque (build du webui, tests, sources,
+# prototypes, docs techniques, ancien flux) et dans l'historique git.
+_ancien/
+prototypes/
+tests/
+web/
+design/
+fabriclens/build_page.py
+docs/design-spec.md
+docs/dossier-technique.md
+docs/spec-fonctionnelle.md
