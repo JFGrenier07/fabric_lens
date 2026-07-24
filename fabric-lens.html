@@ -1734,6 +1734,68 @@ function resolveIpgPorts(fab, ipg, g, ipgDn) {
 // Chaine LOGIQUE : EPG -> BD -> VRF -> subnets, et les contrats
 // ==========================================================================
 
+/** Rejoue la mecanique VLAN pour UN encap d'UN EPG donne, scopee a cet EPG.
+ *
+ *  Ce n'est PAS resolveVlan en petit : rejouer la recherche VLAN entiere
+ *  ramenerait tous les EPGs qui partagent l'encap — hors sujet quand on
+ *  regarde le deploiement d'UN EPG d'un BD. Ici, seule la chaine qui FERME
+ *  le triangle est dessinee :
+ *
+ *      encap ∈ pool  ←  domaine  ←  (fvRsDomAtt de l'EPG ∩ infraRsDomP de l'AAEP)
+ *
+ *  Pour un binding purement static, le cote AAEP du triangle ne s'applique
+ *  pas (le binding n'en passe pas par la) : il reste encap ∈ pool ← domaine
+ *  attache a l'EPG. aaepEntries : [{mo, nodeDn}] des AAEP deployant CET encap
+ *  pour CET EPG — leur noeud est deja pose, on ne fait que fermer le triangle.
+ *  Retourne true si au moins un triangle ferme (sinon : anomalie a afficher). */
+function replayEncapForEpg(fab, epg, vlan, g, epgDn, aaepEntries) {
+  const epgDoms = new Set();
+  for (const rsd of fab.kids(epg.dn, "fvRsDomAtt")) {
+    const t = getd(rsd.a, "tDn", "");
+    if (t) epgDoms.add(t);
+  }
+  const viaAaep = aaepEntries && aaepEntries.length;
+  const aaepDoms = new Map();          // domDn -> [nodeDn des AAEP attaches]
+  if (viaAaep) {
+    for (const e of aaepEntries) {
+      for (const rs of fab.kids(e.mo.dn, "infraRsDomP")) {
+        const t = getd(rs.a, "tDn", "");
+        if (!t) continue;
+        if (!aaepDoms.has(t)) aaepDoms.set(t, []);
+        aaepDoms.get(t).push(e.nodeDn);
+      }
+    }
+  }
+
+  let closed = false;
+  for (const blk of fab.cls("fvnsEncapBlk")) {
+    const lo = encapNum(blk.a.from);
+    const hi = encapNum(blk.a.to);
+    if (lo === null || hi === null || !(lo <= vlan && vlan <= hi)) continue;
+    const pool = fab.byDn.get(rnParent(blk.dn));
+    if (!pool) continue;
+    for (const rs of fab.revOf(pool.dn)) {
+      if (rs.c !== "infraRsVlanNs") continue;
+      const dom = fab.byDn.get(rnParent(rs.dn));
+      if (!dom) continue;
+      if (!epgDoms.has(dom.dn)) continue;                    // cote EPG du triangle
+      if (viaAaep && !aaepDoms.has(dom.dn)) continue;        // cote AAEP du triangle
+      closed = true;
+      const blkDn = g.add(fab.node(blk, "encapBlk",
+        `bloc ${S(blk.a.from)}-${S(blk.a.to)} (${S(getd(blk.a, "allocMode", "?"))})`));
+      const poolDn = g.add(fab.node(pool, "vlanPool"));
+      g.link(blkDn, poolDn, "contenu-dans", "appartient au pool");
+      const domDn = g.add(fab.node(dom, "domain"));
+      g.link(poolDn, domDn, "utilise-par", "pool utilise par le domaine");
+      g.link(epgDn, domDn, "vers-domaine", "domaine associe");
+      for (const aDn of aaepDoms.get(dom.dn) || []) {
+        g.link(domDn, aDn, "utilise-par", "domaine attache a l'AAEP");
+      }
+    }
+  }
+  return closed;
+}
+
 function resolveEpg(fab, epg, g, note = null, vlan = null) {
   const epgDn = g.add(fab.node(epg, "epg", note));
 
@@ -1764,25 +1826,88 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
   // On affiche TOUS les bindings de l'EPG — masquer les autres cacherait qu'un
   // meme EPG porte plusieurs encapsulations — mais on dit lesquels repondent a
   // la question posee (matchesQuery).
+  const isSubnetSearch = vlan === null || vlan === undefined;
+  const byEncap = new Map();           // encapNum -> {paths:[nodeDn], aaeps:[{mo,nodeDn}]}
+  const encapEntry = (n) => {
+    let e = byEncap.get(n);
+    if (!e) { e = { paths: [], aaeps: [] }; byEncap.set(n, e); }
+    return e;
+  };
   for (const rsp of fab.kids(epg.dn, "fvRsPathAtt")) {
     const a = rsp.a;
     const hit = vlan !== null && vlan !== undefined && encapNum(a.encap) === vlan;
     const tgt = parsePathTdn(a.tDn);
+    // "(autre encap)" n'a de sens qu'en recherche VLAN : en recherche subnet
+    // il n'y a pas d'encap cherche, tous les bindings de l'EPG sont a egalite.
     const pDn = g.add(fab.node(rsp, "staticPath",
       `encap ${S(a.encap)} sur ${pathTargetLabel(tgt)}, mode ${S(getd(a, "mode", "?"))}`
-      + (hit ? "" : "  (autre encap)")));
+      + (hit || isSubnetSearch ? "" : "  (autre encap)")));
     // Mutation du noeud STOCKE (il a pu etre fusionne avec un precedent).
     g.nodes.get(pDn).matchesQuery = Boolean(hit);
     g.nodes.get(pDn).target = tgt;
     g.link(epgDn, pDn, "static-port",
-      hit ? "static path binding" : "autre encapsulation");
+      hit || isSubnetSearch ? "static path binding" : "autre encapsulation");
     // Rattacher le binding a l'IPG reel (vPC) et aux leaves nommees dans le
     // tDn : c'est ce qui donne "l'IPG, la ou les leaf, et l'interface".
     // MAIS seulement pour les paths qui portent le VLAN cherche (ou tous si
     // vlan=None, recherche de subnet) - aligne sur resolve.py : derouler la
     // quincaillerie des bindings d'AUTRES encaps remplirait l'ecran d'objets
     // sans rapport avec la recherche.
-    if (tgt && (hit || vlan === null || vlan === undefined)) linkPathToHardware(fab, tgt, g, pDn);
+    if (tgt && (hit || isSubnetSearch)) linkPathToHardware(fab, tgt, g, pDn);
+    if (isSubnetSearch) {
+      const n = encapNum(a.encap);
+      if (n !== null) encapEntry(n).paths.push(pDn);
+    }
+  }
+
+  // Recherche SUBNET seulement : le deploiement de l'EPG se rejoue PAR ENCAP.
+  // 1. Les deploiements AAEP qui visent CET EPG (le pendant des static paths ;
+  //    la recherche VLAN les trouve par encap, ici on les trouve par EPG).
+  if (isSubnetSearch) {
+    for (const f of fab.cls("infraRsFuncToEpg")) {
+      if (getd(f.a, "tDn", "") !== epg.dn) continue;
+      const n = encapNum(f.a.encap);
+      // remonter a l'AAEP porteur (le parent direct est un infraGeneric)
+      let aaep = null;
+      for (let p = rnParent(f.dn); truthy(p); p = rnParent(p)) {
+        const mo = fab.byDn.get(p);
+        if (mo && mo.c === "infraAttEntityP") { aaep = mo; break; }
+      }
+      if (!aaep) continue;
+      const aaepDn = g.add(fab.node(aaep, "aaep"));
+      const fDn = g.add(fab.node(f, "aaepDeploy",
+        `deploiement AAEP - encap ${S(f.a.encap)}, mode ${S(getd(f.a, "mode", "?"))}`));
+      g.link(aaepDn, fDn, "deploie", "l'AAEP deploie un EPG");
+      g.link(fDn, epgDn, "vers-epg", "vers l'EPG");
+      // Le deploiement est reel : les IPG de l'AAEP portent cet EPG, leur
+      // quincaillerie se deroule (aligne sur la semantique de la vue VLAN).
+      for (const rs of fab.revOf(aaep.dn)) {
+        if (rs.c !== "infraRsAttEntP") continue;
+        const ipg = fab.byDn.get(rnParent(rs.dn));
+        if (!ipg) continue;
+        const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
+        g.link(aaepDn, ipgDn, "utilise-par", "AAEP utilise par l'IPG");
+        resolveIpgPorts(fab, ipg, g, ipgDn);
+      }
+      if (n !== null) encapEntry(n).aaeps.push({ mo: aaep, nodeDn: aaepDn });
+    }
+
+    // 2. Le triangle de validation, par encap. Non ferme = anomalie AFFICHEE
+    //    sur le(s) binding(s) porteur(s) — pas un warning en console.
+    for (const [n, e] of byEncap) {
+      const closed = replayEncapForEpg(fab, epg, n, g, epgDn, e.aaeps);
+      if (closed) continue;
+      const marks = e.paths.length ? e.paths : e.aaeps.map((x) => x.nodeDn);
+      for (const dn of marks) {
+        const node = g.nodes.get(dn);
+        if (!node) continue;
+        node.anomaly = "triangle-non-ferme";
+        const msg = e.aaeps.length
+          ? `! encap vlan-${n} hors triangle : aucun domaine commun EPG/AAEP dont le pool couvre cet encap`
+          : `! encap vlan-${n} hors triangle : aucun domaine de l'EPG dont le pool couvre cet encap`;
+        node.note = (node.note ? node.note + " · " : "") + msg;
+      }
+    }
   }
 
   resolveContracts(fab, epg.dn, g, epgDn);
@@ -1904,6 +2029,99 @@ function resolveBd(fab, bd, g, bdDn) {
     const out = fab.inTenant(bd.dn, "l3extOut", rso.a.tnL3extOutName);
     if (out) g.link(bdDn, g.add(fab.node(out, "l3out")), "vers-l3out", "BD annonce via");
   }
+}
+
+/** Verdict d'advertisement d'un gateway de BD : le scope du fvSubnet croise
+ *  avec les L3Outs relies au BD (fvRsBDToOut) et les l3extSubnet export-rtctrl
+ *  qui couvrent reellement ce prefixe. Trois attributs decident, et aucun ne
+ *  suffit seul : un scope public sans L3Out n'annonce rien, un L3Out relie
+ *  sans export-rtctrl couvrant n'annonce pas CE prefixe — c'est precisement
+ *  l'incoherence qu'on veut montrer, avec sa preuve.
+ *  Pose les noeuds/aretes de preuve dans le graphe, retourne le verdict
+ *  structure destine au hit : { scopes, verdict, l3outs:[{name,covered,via}] }. */
+function advertVerdict(fab, bd, net, g) {
+  const outs = [];
+  for (const rso of fab.kids(bd.dn, "fvRsBDToOut")) {
+    const out = fab.inTenant(bd.dn, "l3extOut", rso.a.tnL3extOutName);
+    if (!out) continue;
+    // La preuve : un l3extSubnet export-rtctrl d'un ext-EPG de CE L3Out qui
+    // couvre le reseau du gateway (egalite ou agregat). L'exact gagne.
+    let via = null, viaKind = null;
+    for (const inst of fab.cls("l3extInstP")) {
+      if (rnParent(inst.dn) !== out.dn) continue;
+      for (const ext of fab.kids(inst.dn, "l3extSubnet")) {
+        const scopes = String(ext.a.scope || "").split(",");
+        if (scopes.indexOf("export-rtctrl") < 0) continue;
+        const extNet = parseIpNetwork(ext.a.ip, false);
+        if (!extNet) continue;
+        const k = matchKind(net, extNet);
+        if (k !== "exact" && k !== "aggregate") continue;
+        if (!via || (k === "exact" && viaKind !== "exact")) { via = ext; viaKind = k; }
+      }
+    }
+    outs.push({ out, via, viaKind });
+  }
+  return outs;
+}
+
+/** Applique le verdict au graphe et au hit d'un gateway de BD trouve par la
+ *  recherche subnet : note du noeud enrichie (le verdict se LIT sur la carte),
+ *  aretes de preuve L3Out -> l3extSubnet export-rtctrl, champ structure. */
+function applyAdvert(fab, bd, sub, net, g, sDn, hit) {
+  const scopes = String(getd(sub.a, "scope", "")).split(",").filter((s) => s !== "");
+  const isPublic = scopes.indexOf("public") >= 0;
+  const shared = scopes.indexOf("shared") >= 0;
+  const outs = advertVerdict(fab, bd, net, g);
+
+  let verdict, phrase;
+  if (!isPublic) {
+    verdict = "prive";
+    phrase = "non annonce (scope private)";
+  } else if (!outs.length) {
+    verdict = "sans-l3out";
+    phrase = "public mais le BD n'est relie a aucun L3Out !";
+  } else {
+    const covered = outs.filter((o) => o.via);
+    if (covered.length) {
+      verdict = "annonce";
+      phrase = "annonce via " + covered.map((o) => S(getd(o.out.a, "name", "?"))).join(", ");
+    } else {
+      verdict = "relie-sans-export";
+      phrase = "public, relie a " + outs.map((o) => S(getd(o.out.a, "name", "?"))).join(", ")
+        + ", mais aucun export-rtctrl ne couvre ce prefixe !";
+    }
+  }
+  if (shared) phrase += " · partage inter-VRF (shared)";
+
+  const node = g.nodes.get(sDn);
+  if (node) node.note = (node.note ? node.note + " · " : "") + phrase;
+
+  const l3outs = [];
+  for (const o of outs) {
+    const oDn = g.add(fab.node(o.out, "l3out"));
+    if (o.via) {
+      const inst = fab.byDn.get(rnParent(o.via.dn));
+      const eScopes = String(o.via.a.scope || "").split(",").filter((s) => s !== "");
+      const eDn = g.add(fab.node(o.via, "l3extSubnet", eScopes.join(", ")));
+      g.nodes.get(eDn).roles = eScopes.map(scopeRole);
+      if (inst && inst.c === "l3extInstP") {
+        const iDn = g.add(fab.node(inst, "extEpg"));
+        g.link(oDn, iDn, "contient", "external EPG");
+        g.link(iDn, eDn, "contient", "declare le prefixe");
+      }
+      g.link(oDn, eDn, "annonce",
+        "export-rtctrl couvre " + netToString(net) + (o.viaKind === "aggregate" ? " (par agregat)" : ""));
+    }
+    l3outs.push({
+      name: S(getd(o.out.a, "name", "?")),
+      covered: Boolean(o.via),
+      via: o.via ? o.via.dn : null,
+    });
+  }
+  hit.advert = { scopes, verdict, l3outs };
+  // L'axe « annonce » de l'orbitale : un gateway ne compte que s'il est
+  // REELLEMENT annonce — pas parce que son scope le permettrait.
+  hit.routage = verdict === "annonce";
 }
 
 /** Contrats fournis/consommes par un EPG, ESG ou ext-EPG.
@@ -2254,7 +2472,12 @@ function resolveSubnet(fabrics, query, opts) {
       }
       const sDn = g.add(fab.node(sub, "subnet",
         `gateway ${S(ip)} - scope ${S(getd(sub.a, "scope", "?"))}`));
-      hits.push({ dn: sDn, role: "bd-gateway", match: kind });
+      // Le noeud a pu etre cree AVANT par resolveBd (subnet frere d'un autre
+      // hit), avec la note courte "scope ..." : le noeud HIT porte toujours la
+      // note complete, l'ordre de decouverte ne doit pas changer l'ecran.
+      g.nodes.get(sDn).note = `gateway ${S(ip)} - scope ${S(getd(sub.a, "scope", "?"))}`;
+      const hit = { dn: sDn, role: "bd-gateway", match: kind };
+      hits.push(hit);
       // Un fvSubnet peut vivre SOUS UN EPG (aligne sur resolve.py) : sans ce
       // cas, le subnet trouve restait un noeud orphelin.
       if (parentMo && (parentMo.c === "fvAEPg" || parentMo.c === "fvESg")) {
@@ -2265,6 +2488,7 @@ function resolveSubnet(fabrics, query, opts) {
         const bdDn = g.add(fab.node(bd, "bd"));
         g.link(bdDn, sDn, "contient", "gateway");
         resolveBd(fab, bd, g, bdDn);
+        applyAdvert(fab, bd, sub, net, g, sDn, hit);
         // fvRsBd pointe par NOM : on balaye tout le fabric puis on filtre sur
         // l'egalite de tenant, faute d'index inverse par nom.
         for (const rsbd of fab.cls("fvRsBd")) {
@@ -3060,7 +3284,7 @@ function orbitModel() {
       nSec = roles.indexOf('client') >= 0 ? 1 : 0;
       exact = f.status === 'deployed';
     }
-    for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
+    for (const dn in nodes) if ((nodes[dn].deployment && nodes[dn].deployment.conflict) || nodes[dn].anomaly) warn = true;
     // Couverte par defaut = pas une correspondance : gouttiere, pas d'orbite.
     const covered = f.status === 'couvert-par-defaut';
     const present = !covered && f.status !== 'absent' && (hits.length > 0 || Object.keys(nodes).length > 0);
@@ -3406,15 +3630,19 @@ function renderSideMode() {
 function renderFabCur() {
   const f = (DATA.fabrics || [])[fabIdx] || {};
   const box = $('#fabcur'); box.innerHTML = '';
-  let warn = false;
+  let warn = false, ano = false;
   const nodes = f.nodes || {};
-  for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
+  for (const dn in nodes) {
+    if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
+    if (nodes[dn].anomaly) ano = true;
+  }
   const d = document.createElement('div');
   d.className = 'fabcur-in';
   d.innerHTML = '<div class="fabcur-k">Vous êtes dans</div>' +
     '<div class="fabcur-id mono">' + esc(f.id || '—') + '</div>' +
     '<div class="fabcur-s">' + esc(f.summary || '') + '</div>' +
-    (warn ? '<div class="fabcur-w">⚠ EPG en double déploiement</div>' : '');
+    (warn ? '<div class="fabcur-w">⚠ EPG en double déploiement</div>' : '') +
+    (ano ? '<div class="fabcur-w">⚠ encap hors triangle pool/domaine</div>' : '');
   box.appendChild(d);
   // Routes par defaut repliees : on le DIT, et on ne les deroule qu'au clic.
   const nDef = (f.hits || []).filter(h => h.match === 'default').length;
@@ -3460,7 +3688,7 @@ function renderFabs() {
     b.dataset.absent = f.status === 'absent' ? 1 : 0;
     let warn = false;
     const nodes = f.nodes || {};
-    for (const dn in nodes) if (nodes[dn].deployment && nodes[dn].deployment.conflict) warn = true;
+    for (const dn in nodes) if ((nodes[dn].deployment && nodes[dn].deployment.conflict) || nodes[dn].anomaly) warn = true;
     const nReal = (f.hits || []).filter(h => h.match !== 'default').length;
     const roles = covered ? 'par défaut'
       : (f.roles || []).join('+') || (nReal ? nReal + ' corresp.' : '');
@@ -4575,5 +4803,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 15:36 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 17:27 &#183; 437e04</span>
 <!-- FL:END stamp -->
