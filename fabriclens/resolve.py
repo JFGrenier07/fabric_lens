@@ -370,11 +370,17 @@ class Graph:
 # Chaîne ACCESS POLICIES : de l'encap block jusqu'au port physique
 # ==========================================================================
 
-def resolve_access_chain(fab, vlan, g):
+def resolve_access_chain(fab, vlan, g, active_ipgs=None):
     """Remonte encap block -> pool -> domain -> AAEP -> IPG -> ports -> leaves.
+
+    `active_ipgs` : DNs des IPG deja etablis comme porteurs du VLAN (cibles
+    des static paths et interfaces L3Out, resolus AVANT cet appel). Ils
+    servent de filtre : seuls les AAEP qui deploient le VLAN ou relient un de
+    ces IPG sont dessines.
 
     Retourne la liste des DN d'encap blocks qui couvrent ce VLAN.
     """
+    active_ipgs = active_ipgs or set()
     roots = []
     for blk in fab.by_class.get("fvnsEncapBlk", []):
         lo = encap_num(blk["a"].get("from"))
@@ -403,44 +409,64 @@ def resolve_access_chain(fab, vlan, g):
             dom_dn = g.add(fab.node(dom, "domain"))
             g.link(pool_dn, dom_dn, "utilise-par", "pool utilise par le domaine")
 
-            # AAEP qui référencent ce domaine (via infraRsDomP.tDn)
+            # AAEP qui référencent ce domaine (via infraRsDomP.tDn).
+            # FILTRE : un domain de prod peut etre rattache a des dizaines
+            # d'AAEP ; n'afficher QUE ceux qui concernent le VLAN cherche —
+            # soit ils le deploient (infraRsFuncToEpg), soit un de leurs IPG
+            # est reellement cable pour lui (cible d'un static path ou d'une
+            # interface L3Out, deja etablis dans le graphe). Les autres sont
+            # comptes sur le domain, pas dessines.
+            n_total = 0
+            n_shown = 0
             for rs2 in fab.rev.get(dom["dn"], []):
                 if rs2["c"] != "infraRsDomP":
                     continue
                 aaep = fab.by_dn.get(rn_parent(rs2["dn"]))
                 if not aaep:
                     continue
-                aaep_dn = g.add(fab.node(aaep, "aaep"))
-                g.link(dom_dn, aaep_dn, "utilise-par", "domaine attache a l'AAEP")
-                resolve_aaep(fab, aaep, vlan, g, aaep_dn)
+                n_total += 1
+                if resolve_aaep(fab, aaep, vlan, g, dom_dn, active_ipgs):
+                    n_shown += 1
+            hidden = n_total - n_shown
+            if hidden > 0:
+                node = g.nodes.get(dom_dn)
+                if node is not None and not node.get("note"):
+                    node["note"] = ("%d AAEP rattache(s) au domaine - non "
+                                    "affiches : le VLAN n'y est ni deploye "
+                                    "ni cable" % hidden)
     return roots
 
 
-def resolve_aaep(fab, aaep, vlan, g, aaep_dn):
-    """Depuis un AAEP : déploiement direct d'EPG, puis — SEULEMENT si le VLAN
-    y est réellement déployé — les IPG, ports et leaves.
+def resolve_aaep(fab, aaep, vlan, g, dom_dn, active_ipgs):
+    """Ajoute l'AAEP au graphe SEULEMENT s'il concerne le VLAN cherche.
 
-    LE FILTRE EST LE POINT CENTRAL. Un VLAN pool partagé porte des centaines
-    d'encaps ; son domain est rattaché à plusieurs AAEP, chacun à des dizaines
-    d'IPG. Sans ce filtre, chercher UN VLAN déroulait toute l'infrastructure
-    access du domain — des centaines d'objets sans rapport avec la recherche
-    (constaté sur une fabrique réelle : l'écran devenait illisible).
-
-    La sémantique ACI qui justifie le filtre : quand le VLAN est déployé VIA
-    l'AAEP (infraRsFuncToEpg), il atterrit sur tous les ports des IPG
-    rattachés — les dérouler est alors une information vraie. Quand il ne
-    l'est pas (pool seulement, ou déploiement par static path), les vrais
-    ports viennent du static path binding, déjà résolus précisément par
-    link_path_to_hardware. Le fan-out serait du bruit.
+    Deux raisons legitimes d'apparaitre :
+      - il DEPLOIE le VLAN (infraRsFuncToEpg avec cet encap) : le VLAN
+        atterrit alors sur tous les ports de ses IPG, qui sont deroules ;
+      - un de ses IPG est deja etabli comme porteur du VLAN (static path ou
+        interface L3Out) : l'AAEP est le maillon qui relie cet IPG au domain,
+        on le montre avec CE lien-la, sans derouler ses autres IPG.
+    Sinon : rien. Retourne True si l'AAEP a ete dessine.
     """
-    # 1. Déploiement direct de l'EPG par l'AAEP (infraRsFuncToEpg porte l'encap)
-    deployed_here = False
-    for f in fab.by_class.get("infraRsFuncToEpg", []):
-        if not f["dn"].startswith(aaep["dn"] + "/"):
-            continue
-        if encap_num(f["a"].get("encap")) != vlan:
-            continue
-        deployed_here = True
+    deploys = [f for f in fab.by_class.get("infraRsFuncToEpg", [])
+               if f["dn"].startswith(aaep["dn"] + "/")
+               and encap_num(f["a"].get("encap")) == vlan]
+
+    rels = [rs for rs in fab.rev.get(aaep["dn"], [])
+            if rs["c"] == "infraRsAttEntP"]
+    linked = []
+    for rs in rels:
+        ipg = fab.by_dn.get(rn_parent(rs["dn"]))
+        if ipg and ipg["dn"] in active_ipgs:
+            linked.append(ipg)
+
+    if not deploys and not linked:
+        return False
+
+    aaep_dn = g.add(fab.node(aaep, "aaep"))
+    g.link(dom_dn, aaep_dn, "utilise-par", "domaine attache a l'AAEP")
+
+    for f in deploys:
         f_dn = g.add(fab.node(f, "aaepDeploy",
                               "deploiement AAEP - encap %s, mode %s"
                               % (f["a"].get("encap"), f["a"].get("mode", "?"))))
@@ -449,31 +475,25 @@ def resolve_aaep(fab, aaep, vlan, g, aaep_dn):
         if epg:
             g.link(f_dn, g.add(fab.node(epg, "epg")), "vers-epg", "vers l'EPG")
 
-    # 2. IPG qui référencent cet AAEP — seulement si le VLAN y est déployé
-    n_ipg = 0
-    for rs in fab.rev.get(aaep["dn"], []):
-        if rs["c"] != "infraRsAttEntP":
-            continue
-        ipg = fab.by_dn.get(rn_parent(rs["dn"]))
-        if not ipg:
-            continue
-        n_ipg += 1
-        if not deployed_here:
-            continue          # compté, pas déroulé : le VLAN n'arrive pas ici
-        lag = ipg["a"].get("lagT")
-        kindnote = {"node": "vPC", "link": "Port-Channel"}.get(lag, "acces")
-        ipg_dn = g.add(fab.node(ipg, "ipg", kindnote))
-        g.link(aaep_dn, ipg_dn, "utilise-par", "AAEP utilise par l'IPG")
-        resolve_ipg_ports(fab, ipg, g, ipg_dn)
-
-    # L'information n'est pas perdue : l'AAEP dit combien d'IPG il porte,
-    # et pourquoi ils ne sont pas déroulés.
-    if n_ipg and not deployed_here:
-        node = g.nodes.get(aaep_dn)
-        if node is not None and not node.get("note"):
-            node["note"] = ("%d IPG rattache(s) - non deroules : ce VLAN "
-                            "n'est pas deploye via cet AAEP" % n_ipg)
-
+    if deploys:
+        # deploiement AAEP : le VLAN atterrit sur tous les ports des IPG
+        for rs in rels:
+            ipg = fab.by_dn.get(rn_parent(rs["dn"]))
+            if not ipg:
+                continue
+            lag = ipg["a"].get("lagT")
+            kindnote = {"node": "vPC", "link": "Port-Channel"}.get(lag, "acces")
+            ipg_dn = g.add(fab.node(ipg, "ipg", kindnote))
+            g.link(aaep_dn, ipg_dn, "utilise-par", "AAEP utilise par l'IPG")
+            resolve_ipg_ports(fab, ipg, g, ipg_dn)
+    else:
+        # pas de deploiement ici : on relie seulement les IPG deja porteurs
+        for ipg in linked:
+            lag = ipg["a"].get("lagT")
+            kindnote = {"node": "vPC", "link": "Port-Channel"}.get(lag, "acces")
+            ipg_dn = g.add(fab.node(ipg, "ipg", kindnote))
+            g.link(aaep_dn, ipg_dn, "utilise-par", "AAEP utilise par l'IPG")
+    return True
 
 def resolve_ipg_ports(fab, ipg, g, ipg_dn):
     """IPG -> port selector -> port blocks -> interface profile -> leaves."""
@@ -913,7 +933,10 @@ def resolve_vlan(fabrics, vlan):
     out = {"query": {"type": "vlan", "value": vlan}, "fabrics": []}
     for fab in fabrics:
         g = Graph()
-        blocks = resolve_access_chain(fab, vlan, g)
+        # L'ordre compte : on etablit D'ABORD ou le VLAN est reellement cable
+        # (static paths des EPG, interfaces de L3Out) — cela peuple le graphe
+        # d'IPG « actifs ». L'access chain vient EN DERNIER et ne dessine que
+        # les AAEP qui deploient le VLAN ou relient un de ces IPG.
         transit = find_vlan_transit(fab, vlan, g)
         users = find_vlan_users(fab, vlan, g)
         for dn, b in sorted(users.items()):
@@ -926,6 +949,10 @@ def resolve_vlan(fabrics, vlan):
                 "aaepDeploys": b["aaep"],
                 "conflict": b["mode"] == "both",
             }
+
+        active_ipgs = set(dn for dn, node in g.nodes.items()
+                          if node.get("kind") == "ipg")
+        blocks = resolve_access_chain(fab, vlan, g, active_ipgs)
 
         # Le ROLE du VLAN dans ce fabric : client (aboutit sur un EPG),
         # transit (porte un peering routé et sort du fabric), ou les deux.
