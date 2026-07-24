@@ -1413,6 +1413,15 @@ class Fabric {
     // Index inverse : cible d'une relation -> [relations qui la visent].
     // C'est ce qui remplace les *Rt* absents des backups — un export ne
     // contient QUE les relations forward (tDn, tnXxxName).
+    // Index parent -> enfants directs (aligne sur resolve.py) : remplace les
+    // balayages de classe entiere, quadratiques sur un gros tenant de prod.
+    this.kidsIx = new Map();
+    for (const m of this.mos) {
+      const p = rnParent(m.dn);
+      let arr = this.kidsIx.get(p);
+      if (!arr) { arr = []; this.kidsIx.set(p, arr); }
+      arr.push(m);
+    }
     this.rev = new Map();
     for (const m of this.mos) {
       const tdn = m.a.tDn;
@@ -1450,6 +1459,12 @@ class Fabric {
 
   revOf(dn) {
     return this.rev.get(dn) || [];
+  }
+
+  kids(parentDn, cls) {
+    const arr = this.kidsIx.get(parentDn);
+    if (!arr) return [];
+    return arr.filter((m) => m.c === cls);
   }
 
   static tenantOf(dn) {
@@ -1713,8 +1728,7 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
   }
 
   // EPG -> BD (par NOM, portee tenant)
-  for (const rsbd of fab.cls("fvRsBd")) {
-    if (rnParent(rsbd.dn) !== epg.dn) continue;
+  for (const rsbd of fab.kids(epg.dn, "fvRsBd")) {
     const bd = fab.inTenant(epg.dn, "fvBD", rsbd.a.tnFvBDName);
     if (!bd) continue;
     const bdDn = g.add(fab.node(bd, "bd"));
@@ -1723,8 +1737,7 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
   }
 
   // EPG -> domaine
-  for (const rsd of fab.cls("fvRsDomAtt")) {
-    if (rnParent(rsd.dn) !== epg.dn) continue;
+  for (const rsd of fab.kids(epg.dn, "fvRsDomAtt")) {
     const dom = fab.byDn.get(getd(rsd.a, "tDn", ""));
     if (dom) g.link(epgDn, g.add(fab.node(dom, "domain")), "vers-domaine", "domaine associe");
   }
@@ -1733,8 +1746,7 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
   // On affiche TOUS les bindings de l'EPG — masquer les autres cacherait qu'un
   // meme EPG porte plusieurs encapsulations — mais on dit lesquels repondent a
   // la question posee (matchesQuery).
-  for (const rsp of fab.cls("fvRsPathAtt")) {
-    if (rnParent(rsp.dn) !== epg.dn) continue;
+  for (const rsp of fab.kids(epg.dn, "fvRsPathAtt")) {
     const a = rsp.a;
     const hit = vlan !== null && vlan !== undefined && encapNum(a.encap) === vlan;
     const tgt = parsePathTdn(a.tDn);
@@ -1860,20 +1872,17 @@ function profileCoversNodes(fab, ifaceProfileDn, nodeIds) {
 }
 
 function resolveBd(fab, bd, g, bdDn) {
-  for (const rsctx of fab.cls("fvRsCtx")) {
-    if (rnParent(rsctx.dn) !== bd.dn) continue;
+  for (const rsctx of fab.kids(bd.dn, "fvRsCtx")) {
     const vrf = fab.inTenant(bd.dn, "fvCtx", rsctx.a.tnFvCtxName);
     if (vrf) g.link(bdDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "BD dans le VRF");
   }
 
-  for (const sub of fab.cls("fvSubnet")) {
-    if (!sub.dn.startsWith(bd.dn + "/")) continue;
+  for (const sub of fab.kids(bd.dn, "fvSubnet")) {
     const sDn = g.add(fab.node(sub, "subnet", `scope ${S(getd(sub.a, "scope", "?"))}`));
     g.link(bdDn, sDn, "contient", "gateway");
   }
 
-  for (const rso of fab.cls("fvRsBDToOut")) {
-    if (rnParent(rso.dn) !== bd.dn) continue;
+  for (const rso of fab.kids(bd.dn, "fvRsBDToOut")) {
     const out = fab.inTenant(bd.dn, "l3extOut", rso.a.tnL3extOutName);
     if (out) g.link(bdDn, g.add(fab.node(out, "l3out")), "vers-l3out", "BD annonce via");
   }
@@ -1889,8 +1898,7 @@ function resolveContracts(fab, ownerDn, g, ownerNodeDn) {
     ["fvRsCons", "consume", "tnVzBrCPName"],
     ["fvRsIntraEpg", "intra-epg", "tnVzBrCPName"],
   ]) {
-    for (const rel of fab.cls(cls)) {
-      if (rnParent(rel.dn) !== ownerDn) continue;
+    for (const rel of fab.kids(ownerDn, cls)) {
       const ctr = fab.inTenant(ownerDn, "vzBrCP", rel.a[attr]);
       if (!ctr) continue;
       const cDn = g.add(fab.node(ctr, "contract"));
@@ -1901,18 +1909,15 @@ function resolveContracts(fab, ownerDn, g, ownerNodeDn) {
 }
 
 function resolveContractDetail(fab, ctr, g, cDn) {
-  for (const subj of fab.cls("vzSubj")) {
-    if (rnParent(subj.dn) !== ctr.dn) continue;
+  for (const subj of fab.kids(ctr.dn, "vzSubj")) {
     const sDn = g.add(fab.node(subj, "subject"));
     g.link(cDn, sDn, "contient", "subject");
-    for (const rf of fab.cls("vzRsSubjFiltAtt")) {
-      if (rnParent(rf.dn) !== subj.dn) continue;
+    for (const rf of fab.kids(subj.dn, "vzRsSubjFiltAtt")) {
       const flt = fab.inTenant(ctr.dn, "vzFilter", rf.a.tnVzFilterName);
       if (!flt) continue;
       const fDn = g.add(fab.node(flt, "filter"));
       g.link(sDn, fDn, "vers-filter", "filter");
-      for (const ent of fab.cls("vzEntry")) {
-        if (!ent.dn.startsWith(flt.dn + "/")) continue;
+      for (const ent of fab.kids(flt.dn, "vzEntry")) {
         const a = ent.a;
         let desc = getd(a, "prot", "");
         if (truthy(a.dFromPort) && a.dFromPort !== "unspecified") {
@@ -4573,5 +4578,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 13:56 &#183; c3b0a1</span>
+<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 14:10 &#183; c3b0a1</span>
 <!-- FL:END stamp -->

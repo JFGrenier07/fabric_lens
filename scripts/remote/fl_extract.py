@@ -255,6 +255,10 @@ RN_TEMPLATES = {
     "infraRsSpAccGrp": "rsspAccGrp",                    # non verifie
     "infraRsSpAccPortP": "rsspAccPortP-[{tDn}]",        # non verifie
     # -- management --
+    # verifie sur APIC 6.0(7e) : uni/tn-mgmt/extmgmt-default. C'est le PARENT
+    # de mgmtInstP/mgmtSubnet : sans lui, toute la branche external-management
+    # etait coupee ("3 objets utiles perdus" sur chaque fabrique de prod).
+    "mgmtExtMgmtEntity": "extmgmt-{name}",
     "mgmtMgmtP": "mgmtp-{name}",
     "mgmtOoB": "oob-{name}",
     "mgmtInB": "inb-{name}",
@@ -1432,7 +1436,10 @@ def main(argv):
         try:
             import resolve as _R
             fabs = _R.load_fabrics(args.out)
-            digests = _R.build_digests(fabs)
+            print("Calcul des empreintes de verification (peut prendre "
+                  "plusieurs minutes sur un gros parc)...", flush=True)
+            digests = _R.build_digests(
+                fabs, progress=lambda t: print("  " + t, flush=True))
         except ImportError:
             warn("resolve.py introuvable a cote de fl_extract.py : les empreintes "
                  "de verification ne sont pas calculees. Le webui chargera quand "

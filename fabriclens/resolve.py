@@ -242,6 +242,15 @@ class Fabric:
             self.by_dn[m["dn"]] = m
             self.by_class[m["c"]].append(m)
 
+        # Index parent -> enfants directs. Remplace les balayages de classe
+        # entiere du type « for x in by_class[C]: if rn_parent(x) != P » qui,
+        # repetes pour chaque parent visite, deviennent quadratiques sur un
+        # gros tenant de prod (constate : le calcul des empreintes semblait
+        # gele sur 17 fabriques reelles).
+        self.kids_ix = defaultdict(list)
+        for m in self.mos:
+            self.kids_ix[rn_parent(m["dn"])].append(m)
+
         # Index inverse : cible d'une relation -> [relations qui la visent].
         # C'est ce qui remplace les *Rt* absents des backups.
         self.rev = defaultdict(list)
@@ -260,6 +269,10 @@ class Fabric:
                 name = m["a"].get("name")
                 if tn and name:
                     self.by_tenant_name[(tn, cls)][name] = m
+
+    def kids(self, parent_dn, cls):
+        """Enfants directs de parent_dn appartenant a la classe cls."""
+        return [m for m in self.kids_ix.get(parent_dn, []) if m["c"] == cls]
 
     @staticmethod
     def tenant_of(dn):
@@ -536,9 +549,7 @@ def resolve_epg(fab, epg, g, note=None, vlan=None):
             g.link(ap_dn, g.add(fab.node(tn, "tenant")), "contenu-dans", "dans le tenant")
 
     # EPG -> BD (par NOM, portée tenant)
-    for rsbd in fab.by_class.get("fvRsBd", []):
-        if rn_parent(rsbd["dn"]) != epg["dn"]:
-            continue
+    for rsbd in fab.kids(epg["dn"], "fvRsBd"):
         bd = fab.in_tenant(epg["dn"], "fvBD", rsbd["a"].get("tnFvBDName"))
         if not bd:
             continue
@@ -547,17 +558,13 @@ def resolve_epg(fab, epg, g, note=None, vlan=None):
         resolve_bd(fab, bd, g, bd_dn)
 
     # EPG -> domaine
-    for rsd in fab.by_class.get("fvRsDomAtt", []):
-        if rn_parent(rsd["dn"]) != epg["dn"]:
-            continue
+    for rsd in fab.kids(epg["dn"], "fvRsDomAtt"):
         dom = fab.by_dn.get(rsd["a"].get("tDn", ""))
         if dom:
             g.link(epg_dn, g.add(fab.node(dom, "domain")), "vers-domaine", "domaine associe")
 
     # EPG -> static path bindings
-    for rsp in fab.by_class.get("fvRsPathAtt", []):
-        if rn_parent(rsp["dn"]) != epg["dn"]:
-            continue
+    for rsp in fab.kids(epg["dn"], "fvRsPathAtt"):
         a = rsp["a"]
         hit = vlan is not None and encap_num(a.get("encap")) == vlan
         tgt = parse_path_tdn(a.get("tDn"))
@@ -700,23 +707,17 @@ def profile_covers_nodes(fab, iface_profile_dn, node_ids):
 
 def resolve_bd(fab, bd, g, bd_dn):
     """BD -> VRF, subnets, L3Outs associés."""
-    for rsctx in fab.by_class.get("fvRsCtx", []):
-        if rn_parent(rsctx["dn"]) != bd["dn"]:
-            continue
+    for rsctx in fab.kids(bd["dn"], "fvRsCtx"):
         vrf = fab.in_tenant(bd["dn"], "fvCtx", rsctx["a"].get("tnFvCtxName"))
         if vrf:
             g.link(bd_dn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "BD dans le VRF")
 
-    for sub in fab.by_class.get("fvSubnet", []):
-        if not sub["dn"].startswith(bd["dn"] + "/"):
-            continue
+    for sub in fab.kids(bd["dn"], "fvSubnet"):
         s_dn = g.add(fab.node(sub, "subnet",
                               "scope %s" % sub["a"].get("scope", "?")))
         g.link(bd_dn, s_dn, "contient", "gateway")
 
-    for rso in fab.by_class.get("fvRsBDToOut", []):
-        if rn_parent(rso["dn"]) != bd["dn"]:
-            continue
+    for rso in fab.kids(bd["dn"], "fvRsBDToOut"):
         out = fab.in_tenant(bd["dn"], "l3extOut", rso["a"].get("tnL3extOutName"))
         if out:
             g.link(bd_dn, g.add(fab.node(out, "l3out")), "vers-l3out", "BD annonce via")
@@ -733,9 +734,7 @@ def resolve_contracts(fab, owner_dn, g, owner_node_dn):
     for cls, direction, attr in (("fvRsProv", "provide", "tnVzBrCPName"),
                                  ("fvRsCons", "consume", "tnVzBrCPName"),
                                  ("fvRsIntraEpg", "intra-epg", "tnVzBrCPName")):
-        for rel in fab.by_class.get(cls, []):
-            if rn_parent(rel["dn"]) != owner_dn:
-                continue
+        for rel in fab.kids(owner_dn, cls):
             ctr = fab.in_tenant(owner_dn, "vzBrCP", rel["a"].get(attr))
             if not ctr:
                 continue
@@ -746,22 +745,16 @@ def resolve_contracts(fab, owner_dn, g, owner_node_dn):
 
 def resolve_contract_detail(fab, ctr, g, c_dn):
     """Contract -> subjects -> filters -> entries."""
-    for subj in fab.by_class.get("vzSubj", []):
-        if rn_parent(subj["dn"]) != ctr["dn"]:
-            continue
+    for subj in fab.kids(ctr["dn"], "vzSubj"):
         s_dn = g.add(fab.node(subj, "subject"))
         g.link(c_dn, s_dn, "contient", "subject")
-        for rf in fab.by_class.get("vzRsSubjFiltAtt", []):
-            if rn_parent(rf["dn"]) != subj["dn"]:
-                continue
+        for rf in fab.kids(subj["dn"], "vzRsSubjFiltAtt"):
             flt = fab.in_tenant(ctr["dn"], "vzFilter", rf["a"].get("tnVzFilterName"))
             if not flt:
                 continue
             f_dn = g.add(fab.node(flt, "filter"))
             g.link(s_dn, f_dn, "vers-filter", "filter")
-            for ent in fab.by_class.get("vzEntry", []):
-                if not ent["dn"].startswith(flt["dn"] + "/"):
-                    continue
+            for ent in fab.kids(flt["dn"], "vzEntry"):
                 a = ent["a"]
                 desc = a.get("prot", "")
                 if a.get("dFromPort") and a["dFromPort"] != "unspecified":
@@ -1181,16 +1174,47 @@ def all_queries(fabrics):
     return sorted(vlans), sorted(nets)
 
 
-def build_digests(fabrics):
+def _sample(seq, cap):
+    """Echantillon deterministe : bornes + repartition reguliere."""
+    if len(seq) <= cap:
+        return list(seq)
+    step = max(1, len(seq) // cap)
+    picked = list(seq[::step])[:cap]
+    for edge in (seq[0], seq[-1]):
+        if edge not in picked:
+            picked.append(edge)
+    return picked
+
+
+def build_digests(fabrics, progress=None, cap=120):
+    """Empreintes de verification.
+
+    `progress` : callback(texte) appele regulierement — sur 17 fabriques de
+    prod le calcul peut durer, et un silence prolonge a deja ete pris pour
+    une boucle infinie. `cap` borne le nombre de requetes par famille : la
+    verification reste un controle par echantillon deterministe, pas un
+    inventaire — au-dela de ~120 requetes le gain de confiance est nul et
+    le cout devient visible.
+    """
     vlans, nets = all_queries(fabrics)
+    vlans = _sample(sorted(vlans), cap)
+    nets = _sample(sorted(nets), cap)
+    total = len(vlans) + len(nets)
     out = {"vlan": {}, "subnet": {}}
+    done = 0
     for v in vlans:
         out["vlan"][str(v)] = digest_of(resolve_vlan(fabrics, v))
+        done += 1
+        if progress and done % 10 == 0:
+            progress("empreintes %d/%d" % (done, total))
     for n in nets:
         try:
             out["subnet"][n] = digest_of(resolve_subnet(fabrics, n))
         except ValueError:
-            continue
+            pass
+        done += 1
+        if progress and done % 10 == 0:
+            progress("empreintes %d/%d" % (done, total))
     return out
 
 
@@ -1218,7 +1242,7 @@ def main():
     fabs = load_fabrics(args.data)
 
     if args.digests:
-        d = build_digests(fabs)
+        d = build_digests(fabs, progress=lambda t: sys.stderr.write(t + "\n"))
         blob = json.dumps(d, sort_keys=True, separators=(",", ":"))
         if args.out:
             with open(args.out, "w", encoding="utf-8") as fh:
