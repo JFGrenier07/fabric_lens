@@ -35,11 +35,10 @@ Voir **[docs/DEMARRAGE-SIMPLE.txt](docs/DEMARRAGE-SIMPLE.txt)**.
 
 | | |
 | --- | --- |
-| `scripts/remote/fl_extract.py` | le script, lancé **sans option** : distille les backups → `fabriclens-data.json` |
+| `scripts/remote/fl_extract.py` | le script, lancé **sans option** : distille les backups → `fabriclens-data.json`. Autonome : c'est le SEUL fichier Python à poser sur le serveur |
 | `scripts/remote/fabric_path` | la liste de tes fabriques (`nom  chemin`), une par ligne |
-| `fabriclens/resolve.py` | le résolveur (référence) ; posé à côté du script, jamais lancé seul |
 | `web/gabarit.html` | le webui — source unique, vide de données |
-| `web/resolve.js` / `web/selfcheck.js` | résolveur JS + auto-vérification, inlinés dans le webui |
+| `web/resolve.js` | le résolveur — l'unique implémentation, inlinée dans le webui |
 | `scripts/fabric-lens.bat` | le lanceur Windows (3 étapes) |
 | `fabriclens/build_page.py` | **outil dev** : `--shell` fabrique le webui vide |
 
@@ -63,7 +62,9 @@ Ce que les vrais backups ont imposé, et qu'aucune documentation ne disait :
 
 ## Vérification
 
-En bas à droite de l'app, « vérifié 78/78 » signifie que le résolveur du
-navigateur donne exactement les mêmes réponses que le résolveur Python, sur
-tes données. Le contrôle tourne chez toi, rien n'en sort — une empreinte ne
-permet de reconstituer ni DN, ni IP, ni nom de tenant.
+Le résolveur du navigateur est l'unique implémentation. Il a été porté depuis
+un résolveur Python de référence et vérifié identique requête par requête
+(72 requêtes, 0 écart) avant que la référence soit archivée ; depuis, chaque
+évolution est verrouillée par une suite de tests de régression au
+développement. En bas à droite de l'app, le badge indique la version de la
+page, le nombre de fabriques chargées et la date d'extraction des données.

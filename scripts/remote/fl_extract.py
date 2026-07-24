@@ -41,7 +41,7 @@ import sys
 import tarfile
 import time
 
-EXTRACTOR_VERSION = "1.1.0"
+EXTRACTOR_VERSION = "1.2.0"
 
 # ===========================================================================
 #
@@ -1110,7 +1110,7 @@ def main(argv):
                          "sur la sortie standard - pour un selecteur de backup")
     ap.add_argument("--bundle", default=None,
                     help="produire UN SEUL fichier JSON pret a charger dans le "
-                         "webui : {fabrics, digests}. Le mode le plus simple pour "
+                         "webui : {fabrics}. Le mode le plus simple pour "
                          "les premiers tests - le .bat le rapatrie et on le charge "
                          "directement dans Fabric Lens.")
     ap.add_argument("--pick", default=None,
@@ -1126,10 +1126,10 @@ def main(argv):
                     help="ne traiter que ce fabric_id")
     args = ap.parse_args(argv[1:])
 
-    # ── MODE PAR DÉFAUT, SANS AUCUNE OPTION ──────────────────────────────
+    # -- MODE PAR DEFAUT, SANS AUCUNE OPTION --------------------------------
     # `python3 fl_extract.py` tout court : lit le bloc FABRICS, distille, et
-    # écrit fabriclens-data.json À CÔTÉ DU SCRIPT. C'est le seul geste que
-    # l'utilisateur a à faire. Les options ci-dessus restent pour le debug,
+    # ecrit fabriclens-data.json A COTE DU SCRIPT. C'est le seul geste que
+    # l'utilisateur a a faire. Les options ci-dessus restent pour le debug,
     # mais on ne les tape jamais au quotidien.
     if len(argv) <= 1:
         if not FABRICS:
@@ -1405,9 +1405,11 @@ def main(argv):
         print("FL-EXTRACT-FAIL")
         return 2
 
-    # --bundle : reunir les .fl.json.gz en un seul JSON chargeable dans le webui,
-    # avec les empreintes de verification si resolve.py est a cote (il l'est,
-    # le .bat le pousse aussi).
+    # --bundle : reunir les .fl.json.gz en un seul JSON chargeable dans le webui.
+    # Le resolveur vit dans la page (web/resolve.js) : ce script n'a besoin de
+    # RIEN d'autre que lui-meme sur le serveur - aucun import, aucun calcul
+    # d'empreintes (l'ancien controle 'verifie N/N' est remplace par des tests
+    # de regression cote developpement, tests/regression.mjs).
     if args.bundle:
         fabrics = []
         for fid in sorted(manifest):
@@ -1418,51 +1420,18 @@ def main(argv):
                 doc = json.loads(fh.read().decode("utf-8"))
             fabrics.append({"meta": doc["meta"], "mos": doc["mos"]})
 
-        digests = {"vlan": {}, "subnet": {}}
-        # resolve.py peut etre a cote du script (cas du .bat, qui les rassemble)
-        # OU dans fabriclens/ a cote (cas d'un clone du depot, ou fl_extract est
-        # dans scripts/remote/ et resolve dans fabriclens/). On cherche les deux.
-        here = os.path.dirname(os.path.abspath(__file__))
-        candidats = [
-            here,                                                  # a cote
-            os.path.join(here, "..", "..", "fabriclens"),          # depuis scripts/remote/
-            os.path.join(here, "fabriclens"),                      # fabriclens/ sous le script
-            os.path.join(os.getcwd(), "fabriclens"),               # depuis la racine du clone
-        ]
-        for d in candidats:
-            d = os.path.abspath(d)
-            if os.path.isfile(os.path.join(d, "resolve.py")) and d not in sys.path:
-                sys.path.insert(0, d)
-        try:
-            import resolve as _R
-            fabs = _R.load_fabrics(args.out)
-            print("Calcul des empreintes de verification (peut prendre "
-                  "plusieurs minutes sur un gros parc)...", flush=True)
-            digests = _R.build_digests(
-                fabs, progress=lambda t: print("  " + t, flush=True))
-        except ImportError:
-            warn("resolve.py introuvable a cote de fl_extract.py : les empreintes "
-                 "de verification ne sont pas calculees. Le webui chargera quand "
-                 "meme les fabriques, sans le controle 'verifie N/N'. Pour l'avoir, "
-                 "place resolve.py dans le meme dossier que fl_extract.py.")
-        except Exception as exc:                    # resolve present mais en erreur
-            warn("empreintes de verification non calculees (%s) - le webui "
-                 "chargera quand meme les fabriques, sans auto-verification" % exc)
-
         bundle = {
             "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "fabricCount": len(fabrics),
             "fabrics": fabrics,
-            "digests": digests,
         }
         blob = json.dumps(bundle, ensure_ascii=False, separators=(",", ":"))
         tmp = args.bundle + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(blob)
         os.rename(tmp, args.bundle)
-        print("\nBundle : %d fabrique(s), %d VLAN + %d subnet -> %s (%s)"
-              % (len(fabrics), len(digests["vlan"]), len(digests["subnet"]),
-                 args.bundle, human(len(blob.encode("utf-8")))))
+        print("\nBundle : %d fabrique(s) -> %s (%s)"
+              % (len(fabrics), args.bundle, human(len(blob.encode("utf-8")))))
         print("RESULT_FILE=%s" % os.path.basename(args.bundle))
         if _bundle_tmp:
             shutil.rmtree(_bundle_tmp, ignore_errors=True)

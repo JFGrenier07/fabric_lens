@@ -37,8 +37,8 @@ SUR LE RHEL (ou machine Linux) — le script se lance SANS OPTION :
    Il lit le bloc FABRICS, distille les backups, et écrit À CÔTÉ DE LUI :
       fabriclens-data.json
 
-   (resolve.py doit être dans le même dossier — le script s'en sert pour
-    calculer les empreintes de vérification. Tu ne le lances pas.)
+   (le script se suffit à lui-même : rien d'autre à poser sur le serveur
+    que fl_extract.py et fabric_path)
 
 CÔTÉ LINUX : ouvre fabric-lens.html, bouton « Un dossier… » (ou « Un fichier… »),
    pointe le dossier qui contient fabriclens-data.json. C'est tout.
@@ -55,8 +55,8 @@ BON À SAVOIR
 ────────────────────────────────────────────────────────────────────────────────
 
 - Rien ne transite par le réseau côté navigateur : le .json est lu localement.
-- En bas à droite, « vérifié 78/78 » = le résolveur du navigateur donne
-  exactement les mêmes réponses que le résolveur Python, sur tes données.
+- En bas à droite, le badge indique la version de la page, le nombre de
+  fabriques chargées et la date d'extraction des données.
 - Si la console affiche « classes UTILES sans gabarit », transmets-moi ces
   lignes : tes fabriques ont une construction que le labo n'avait pas.
 - Aucun Python sur Windows. Aucun serveur. Aucun droit admin.

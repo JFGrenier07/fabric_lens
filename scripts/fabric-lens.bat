@@ -33,7 +33,6 @@ echo [1/3] Envoi des scripts...
 plink -batch "%SESSION%" "mkdir -p %REMOTE%" || goto :err
 pscp -batch -q "%HERE%remote\fl_extract.py" "%SESSION%:%REMOTE%/fl_extract.py" || goto :err
 pscp -batch -q "%HERE%remote\fabric_path"   "%SESSION%:%REMOTE%/fabric_path" || goto :err
-pscp -batch -q "%HERE%..\fabriclens\resolve.py" "%SESSION%:%REMOTE%/resolve.py" || goto :err
 
 echo [2/3] Extraction ^(les chemins sont dans fl_extract.py^)...
 plink -batch "%SESSION%" "cd %REMOTE% && python3 fl_extract.py" || goto :err
