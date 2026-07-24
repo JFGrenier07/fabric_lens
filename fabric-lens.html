@@ -834,6 +834,11 @@ button.chip:hover { border-color: var(--color-accent); color: var(--color-accent
 #fl-welcome .fw-hint { font-size: 11px; color: var(--color-neutral-600); margin-top: 20px; line-height: 1.5; }
 #fl-welcome code { font-family: ui-monospace, monospace; color: var(--color-accent-300); }
 #fl-reload { cursor: pointer; }
+
+/* ── Outil main : attraper le graphe et le déplacer ─────────────────────── */
+#l-carte { cursor: grab; touch-action: none; }
+#l-carte.panning { cursor: grabbing; }
+#l-carte.panning .node { cursor: grabbing; }
 </style>
 
 <div id="app">
@@ -2912,6 +2917,88 @@ function applyZoom(dur) {
   setVB(zmode === 'over' || !o ? overviewVB() : loupeVB(o), dur);
   renderTools();
 }
+
+/* ═══ Outil main (grab) + zoom molette — vue carte ═══════════════════════
+   On attrape le graphe N'IMPORTE OÙ (fond ou nœud) et on le déplace ; le
+   zoom molette se fait autour du curseur.
+
+   Deux pièges traités explicitement :
+   1. Le SVG est en preserveAspectRatio "meet" : il est letterboxé quand son
+      ratio diffère de celui du cadre. La conversion pixel -> unités viewBox
+      utilise donc max(vbW/pxW, vbH/pxH) — sans ça le graphe ne suit pas le
+      curseur 1:1 et le geste paraît "mou".
+   2. Un déplacement se termine par un événement click : sans garde, relâcher
+      la main SUR un nœud le sélectionnerait. Le seuil de 5 px distingue le
+      clic du drag, et le click qui clôt un drag est avalé en phase capture. */
+function enableCartePan() {
+  const host = $('#l-carte');
+  if (!host) return;
+  let drag = null;
+
+  const unitsPerPx = () => {
+    const r = host.getBoundingClientRect();
+    return Math.max(vb[2] / Math.max(1, r.width), vb[3] / Math.max(1, r.height));
+  };
+  const paint = () => {
+    const svg = $('#l-carte svg');
+    if (svg) svg.setAttribute('viewBox', vb.map(v => v.toFixed(1)).join(' '));
+  };
+
+  host.addEventListener('pointerdown', ev => {
+    if (ev.button !== 0 || view !== 'carte' || !vb) return;
+    drag = { x: ev.clientX, y: ev.clientY, vb: vb.slice(), id: ev.pointerId, moved: false };
+  });
+  host.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      try { host.setPointerCapture(drag.id); } catch (e) {}
+      host.classList.add('panning');
+      if (anim) { cancelAnimationFrame(anim); anim = null; }
+    }
+    const k = Math.max(drag.vb[2] / Math.max(1, host.clientWidth),
+                       drag.vb[3] / Math.max(1, host.clientHeight));
+    vb = [drag.vb[0] - dx * k, drag.vb[1] - dy * k, drag.vb[2], drag.vb[3]];
+    paint();
+  });
+  const finish = () => {
+    if (!drag) return;
+    if (drag.moved) host.__panned = true;   // le click qui suit n'est pas une sélection
+    drag = null;
+    host.classList.remove('panning');
+  };
+  host.addEventListener('pointerup', finish);
+  host.addEventListener('pointercancel', finish);
+  host.addEventListener('click', ev => {
+    if (host.__panned) { host.__panned = false; ev.stopPropagation(); ev.preventDefault(); }
+  }, true);
+
+  host.addEventListener('wheel', ev => {
+    if (view !== 'carte' || !vb || !M) return;
+    ev.preventDefault();
+    if (anim) { cancelAnimationFrame(anim); anim = null; }
+    const r = host.getBoundingClientRect();
+    const kOld = unitsPerPx();
+    // le point du graphe sous le curseur, letterboxing compris
+    const cx = vb[0] + vb[2] / 2 + (ev.clientX - r.left - r.width / 2) * kOld;
+    const cy = vb[1] + vb[3] / 2 + (ev.clientY - r.top - r.height / 2) * kOld;
+    const f = ev.deltaY > 0 ? 1.18 : 1 / 1.18;
+    let w = vb[2] * f;
+    // bornes : ni plus serré que ~2 colonnes, ni plus large que 1.6× le graphe
+    const wMin = PITCH_X * 2;
+    const wMax = Math.max(M.width, M.height, wMin) * 1.6;
+    w = Math.max(wMin, Math.min(wMax, w));
+    const h = vb[3] * (w / vb[2]);
+    const kNew = kOld * (w / vb[2]);
+    vb = [cx - w / 2 - (ev.clientX - r.left - r.width / 2) * kNew,
+          cy - h / 2 - (ev.clientY - r.top - r.height / 2) * kNew, w, h];
+    paint();
+  }, { passive: false });
+}
+enableCartePan();
+
 function focusPaint() {
   if (!M) return;
   const near = new Set([sel]);
@@ -4475,5 +4562,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 13:42 &#183; c3b0a1</span>
+<span id="fl-build" title="Repere de version. Fusionne avec le resultat de l'auto-verification du resolveur.">build 2026-07-24 13:48 &#183; c3b0a1</span>
 <!-- FL:END stamp -->
