@@ -1415,14 +1415,30 @@ def main(argv):
             fabrics.append({"meta": doc["meta"], "mos": doc["mos"]})
 
         digests = {"vlan": {}, "subnet": {}}
+        # resolve.py peut etre a cote du script (cas du .bat, qui les rassemble)
+        # OU dans fabriclens/ a cote (cas d'un clone du depot, ou fl_extract est
+        # dans scripts/remote/ et resolve dans fabriclens/). On cherche les deux.
+        here = os.path.dirname(os.path.abspath(__file__))
+        candidats = [
+            here,                                                  # a cote
+            os.path.join(here, "..", "..", "fabriclens"),          # depuis scripts/remote/
+            os.path.join(here, "fabriclens"),                      # fabriclens/ sous le script
+            os.path.join(os.getcwd(), "fabriclens"),               # depuis la racine du clone
+        ]
+        for d in candidats:
+            d = os.path.abspath(d)
+            if os.path.isfile(os.path.join(d, "resolve.py")) and d not in sys.path:
+                sys.path.insert(0, d)
         try:
-            here = os.path.dirname(os.path.abspath(__file__))
-            if here not in sys.path:
-                sys.path.insert(0, here)
             import resolve as _R
             fabs = _R.load_fabrics(args.out)
             digests = _R.build_digests(fabs)
-        except Exception as exc:                    # resolve absent ou en erreur
+        except ImportError:
+            warn("resolve.py introuvable a cote de fl_extract.py : les empreintes "
+                 "de verification ne sont pas calculees. Le webui chargera quand "
+                 "meme les fabriques, sans le controle 'verifie N/N'. Pour l'avoir, "
+                 "place resolve.py dans le meme dossier que fl_extract.py.")
+        except Exception as exc:                    # resolve present mais en erreur
             warn("empreintes de verification non calculees (%s) - le webui "
                  "chargera quand meme les fabriques, sans auto-verification" % exc)
 
