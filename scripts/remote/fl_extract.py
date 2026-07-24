@@ -147,6 +147,7 @@ KEEP_CLASSES = frozenset([
     "l3extOut", "l3extRsEctx", "l3extRsL3DomAtt", "l3extInstP", "l3extSubnet",
     "l3extLNodeP", "l3extRsNodeL3OutAtt", "l3extLIfP", "l3extRsPathL3OutAtt",
     "l3extIp", "l3extMember", "l3extVirtualLIfP", "l3extRsDynPathAtt",
+    "ipRouteP", "ipNexthopP",
     "ospfExtP", "bgpExtP", "eigrpExtP", "bgpPeerP",
     # --- L2Out -------------------------------------------------------------
     "l2extOut", "l2extInstP", "l2extLNodeP", "l2extLIfP", "l2extRsPathL2OutAtt",
@@ -312,6 +313,9 @@ RN_TEMPLATES = {
     "l3extSubnet": "extsubnet-[{ip}]",
     "l3extLNodeP": "lnodep-{name}",
     "l3extRsNodeL3OutAtt": "rsnodeL3OutAtt-[{tDn}]",
+    # verifies sur APIC 6.0(7e) : rt-[172.31.99.0/24] / nh-[192.168.200.9]
+    "ipRouteP": "rt-[{ip}]",
+    "ipNexthopP": "nh-[{nhAddr}]",
     "l3extLIfP": "lifp-{name}",
     "l3extRsPathL3OutAtt": "rspathL3OutAtt-[{tDn}]",
     "l3extRsDynPathAtt": "rsdynPathAtt-[{tDn}]",
@@ -870,7 +874,12 @@ def selftest_tree():
                 _mo("l3extSubnet", {"ip": "10.21.10.0/24",
                                     "scope": "export-rtctrl,import-security"}),
                 _mo("l3extSubnet", {"ip": "0.0.0.0/0", "scope": "import-security"}),
-                _mo("fvRsCons", {"tnVzBrCPName": "Web_Internet_Contract"})])]),
+                _mo("fvRsCons", {"tnVzBrCPName": "Web_Internet_Contract"})]),
+            _mo("l3extLNodeP", {"name": "NP-INTERNET"}, [
+                _mo("l3extRsNodeL3OutAtt",
+                    {"tDn": "topology/pod-1/node-101", "rtrId": "10.0.0.101"}, [
+                    _mo("ipRouteP", {"ip": "172.31.99.0/24", "pref": "1"}, [
+                        _mo("ipNexthopP", {"nhAddr": "192.168.200.9"})])])])]),
     ])
     return _mo("polUni", {"dn": "uni"}, [infra, phys_dom, tenant])
 
@@ -910,6 +919,11 @@ SELFTEST_EXPECT = [
     ("uni/tn-Production/out-L3OUT-INTERNET/instP-EXT-INTERNET", "ext-EPG"),
     ("uni/tn-Production/out-L3OUT-INTERNET/instP-EXT-INTERNET/extsubnet-[10.21.10.0/24]",
      "l3extSubnet (scopes)"),
+    ("uni/tn-Production/out-L3OUT-INTERNET/lnodep-NP-INTERNET/"
+     "rsnodeL3OutAtt-[topology/pod-1/node-101]/rt-[172.31.99.0/24]", "route statique"),
+    ("uni/tn-Production/out-L3OUT-INTERNET/lnodep-NP-INTERNET/"
+     "rsnodeL3OutAtt-[topology/pod-1/node-101]/rt-[172.31.99.0/24]/nh-[192.168.200.9]",
+     "next-hop de route statique"),
 ]
 
 

@@ -1043,6 +1043,10 @@ const KIND_LABEL = {
   l3extIp: "Node Address",
   l3extMember: "SVI Member",
   l3extRsNodeL3OutAtt: "L3Out Node",
+  ipRouteP: "Static Route",
+  ipNexthopP: "Next Hop",
+  mgmtInstP: "External Mgmt EPG",
+  mgmtSubnet: "Management Subnet",
   bgpPeerP: "BGP Peer",
   ospfExtP: "OSPF",
   bgpExtP: "BGP",
@@ -2599,6 +2603,102 @@ function findSubnetInterco(fab, qnet, g, hits) {
   }
 }
 
+/** Le node id lisible d'un tDn de type topology/pod-1/node-101. */
+function nodeIdOf(tDn) {
+  const m = /node-(\d+)/.exec(String(tDn || ""));
+  return m ? m[1] : "?";
+}
+
+/** Routes statiques d'un L3Out (ipRouteP sous le node du node profile) et
+ *  leurs next-hops. Une route par defaut statique suit la meme regle que les
+ *  /0 d'ext-EPG : dite en une ligne, jamais deroulee d'office. */
+function findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults) {
+  for (const rt of fab.cls("ipRouteP")) {
+    const net = parseIpNetwork(rt.a.ip, false);
+    if (!net) continue;
+    let kind = matchKind(qnet, net);
+    if (!kind) continue;
+    if (kind === "aggregate" && net.prefix === 0) kind = "default";
+    const nodeAtt = fab.byDn.get(rnParent(rt.dn));
+    if (kind === "default" && !expandDefaults) {
+      const dn = g.add(fab.node(rt, "l3outPath",
+        `couvre par defaut · route statique via node ${nodeAtt ? nodeIdOf(nodeAtt.a.tDn) : "?"}`));
+      hits.push({ dn, role: "route-statique", match: kind });
+      continue;
+    }
+    const dn = g.add(fab.node(rt, "l3outPath",
+      `route statique ${S(rt.a.ip)}`
+      + (truthy(rt.a.pref) && rt.a.pref !== "1" ? ` pref ${S(rt.a.pref)}` : "")
+      + (rt.a.aggregate === "yes" ? " · aggregate" : "")));
+    g.nodes.get(dn).matchesQuery = true;
+    hits.push({ dn, role: "route-statique", match: kind });
+    for (const nh of fab.kids(rt.dn, "ipNexthopP")) {
+      const nhDn = g.add(fab.node(nh, "l3outPath", `next-hop ${S(getd(nh.a, "nhAddr", "?"))}`));
+      g.link(dn, nhDn, "via", "next-hop de la route");
+    }
+    if (nodeAtt && nodeAtt.c === "l3extRsNodeL3OutAtt") {
+      const naDn = g.add(fab.node(nodeAtt, "l3outPath",
+        `node ${nodeIdOf(nodeAtt.a.tDn)}`
+        + (truthy(nodeAtt.a.rtrId) ? ` · router-id ${S(nodeAtt.a.rtrId)}` : "")));
+      g.link(naDn, dn, "contient", "route statique du node");
+      linkIntercoContext(fab, g, naDn, fab.byDn.get(rnParent(nodeAtt.dn)));
+    }
+  }
+  // un next-hop cherche directement (adresse du routeur d'a cote)
+  for (const nh of fab.cls("ipNexthopP")) {
+    const net = ipNetOfAddr(nh.a.nhAddr);
+    if (!net) continue;
+    const kind = matchKind(qnet, net);
+    if (!kind) continue;
+    const rt = fab.byDn.get(rnParent(nh.dn));
+    const dn = g.add(fab.node(nh, "l3outPath", `next-hop ${S(getd(nh.a, "nhAddr", "?"))}`));
+    if (g.nodes.get(dn).matchesQuery) continue;      // deja pose par sa route
+    g.nodes.get(dn).matchesQuery = true;
+    hits.push({ dn, role: "next-hop", match: kind });
+    if (rt && rt.c === "ipRouteP") {
+      const rtDn = g.add(fab.node(rt, "l3outPath", `route statique ${S(rt.a.ip)}`));
+      g.link(rtDn, dn, "via", "next-hop de la route");
+      const nodeAtt = fab.byDn.get(rnParent(rt.dn));
+      if (nodeAtt && nodeAtt.c === "l3extRsNodeL3OutAtt") {
+        const naDn = g.add(fab.node(nodeAtt, "l3outPath", `node ${nodeIdOf(nodeAtt.a.tDn)}`));
+        g.link(naDn, rtDn, "contient", "route statique du node");
+        linkIntercoContext(fab, g, naDn, fab.byDn.get(rnParent(nodeAtt.dn)));
+      }
+    }
+  }
+}
+
+/** Subnets de management externe (OOB) : qui a le droit d'atteindre le
+ *  management des switches. C'est une CLASSIFICATION (comme import-security),
+ *  pas une adresse — un graphe parallele au reseau de production. */
+function findSubnetMgmt(fab, qnet, g, hits, expandDefaults) {
+  for (const ms of fab.cls("mgmtSubnet")) {
+    const net = parseIpNetwork(ms.a.ip, false);
+    if (!net) continue;
+    let kind = matchKind(qnet, net);
+    if (!kind) continue;
+    if (kind === "aggregate" && net.prefix === 0) kind = "default";
+    const inst = fab.byDn.get(rnParent(ms.dn));
+    const instName = inst ? S(getd(inst.a, "name", "?")) : "?";
+    if (kind === "default" && !expandDefaults) {
+      const dn = g.add(fab.node(ms, "l3extSubnet",
+        `couvre par defaut · acces management (OOB) · ${instName}`));
+      hits.push({ dn, role: "mgmt", match: kind });
+      continue;
+    }
+    const dn = g.add(fab.node(ms, "l3extSubnet",
+      "autorise a atteindre le management (OOB) des switches"));
+    g.nodes.get(dn).matchesQuery = true;
+    hits.push({ dn, role: "mgmt", match: kind });
+    if (inst && inst.c === "mgmtInstP") {
+      const nOob = fab.kids(inst.dn, "mgmtRsOoBProv").length;
+      const iDn = g.add(fab.node(inst, "extEpg",
+        "external management EPG" + (nOob ? ` · ${nOob} contrat(s) OOB` : "")));
+      g.link(iDn, dn, "contient", "declare le prefixe");
+    }
+  }
+}
+
 function resolveVlan(fabrics, vlan) {
   const out = { query: { type: "vlan", value: vlan }, fabrics: [] };
   for (const fab of fabrics) {
@@ -2911,8 +3011,11 @@ function resolveSubnet(fabrics, query, opts) {
     }
 
     // Les adresses reelles d'equipement : interfaces de L3Out, floating SVI,
-    // membres de vPC, peers BGP, router-id (adresse exacte seulement).
+    // membres de vPC, peers BGP, router-id (adresse exacte seulement) —
+    // puis les routes statiques et le management externe (OOB).
     findSubnetInterco(fab, qnet, g, hits);
+    findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults);
+    findSubnetMgmt(fab, qnet, g, hits, expandDefaults);
 
     // Les vraies correspondances d'abord, le filet par defaut en queue ;
     // tri STABLE : a nature egale, l'ordre de decouverte est conserve.
@@ -2920,9 +3023,11 @@ function resolveSubnet(fabrics, query, opts) {
 
     const nDef = hits.filter((h) => h.match === "default").length;
     const nReal = hits.length - nDef;
-    const INTERCO_ROLES = { "interconnexion": 1, "peer-bgp": 1, "router-id": 1 };
-    const allInterco = nReal > 0 &&
-      hits.every((h) => h.match === "default" || INTERCO_ROLES[h.role]);
+    const INTERCO_ROLES = { "interconnexion": 1, "peer-bgp": 1, "router-id": 1,
+                            "route-statique": 1, "next-hop": 1 };
+    const realHits = hits.filter((h) => h.match !== "default");
+    const allInterco = nReal > 0 && realHits.every((h) => INTERCO_ROLES[h.role]);
+    const allMgmt = nReal > 0 && realHits.every((h) => h.role === "mgmt");
     let status, summary;
     if (!hits.length) {
       status = "absent"; summary = "aucune correspondance";
@@ -2932,6 +3037,10 @@ function resolveSubnet(fabrics, query, opts) {
     } else if (allInterco) {
       status = "hit";
       summary = `interconnexion — ne vit dans aucun BD (${nReal})`
+        + (nDef ? ` + ${nDef} par defaut` : "");
+    } else if (allMgmt) {
+      status = "hit";
+      summary = `acces au management (OOB) (${nReal})`
         + (nDef ? ` + ${nDef} par defaut` : "");
     } else {
       status = "hit";
@@ -5211,5 +5320,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 18:57 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 19:01 &#183; 437e04</span>
 <!-- FL:END stamp -->
