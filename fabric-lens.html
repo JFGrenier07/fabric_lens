@@ -1038,6 +1038,11 @@ const KIND_LABEL = {
   l3extRsPathL3OutAtt: "L3Out Interface",
   l3extLIfP: "Logical Interface Profile",
   l3extLNodeP: "Logical Node Profile",
+  l3extVirtualLIfP: "Floating SVI",
+  l3extRsDynPathAtt: "Floating Path",
+  l3extIp: "Node Address",
+  l3extMember: "SVI Member",
+  l3extRsNodeL3OutAtt: "L3Out Node",
   bgpPeerP: "BGP Peer",
   ospfExtP: "OSPF",
   bgpExtP: "BGP",
@@ -2420,6 +2425,180 @@ function scopeRole(s) {
   return { scope: s, axis: r[0], gui: r[1], sens: r[2] };
 }
 
+// ==========================================================================
+// Famille INTERCONNEXION : les adresses reelles d'equipement
+// --------------------------------------------------------------------------
+// Un subnet d'interconnexion (/30 d'un sub-if, SVI de peering, floating SVI)
+// ne vit dans AUCUN BD : avant cette famille, le chercher ne remontait que
+// les ext-EPG /0 — l'adresse reelle d'interface n'etait jamais montree.
+// ==========================================================================
+
+/** addr d'interface ou de peer -> reseau comparable par matchKind.
+ *  "10.0.0.1/30" -> le reseau de l'interface (10.0.0.0/30) ;
+ *  "10.0.0.1"    -> l'hote exact (/32 ou /128 — peers, router-id) ;
+ *  "10.0.0.0/24" tel quel (peering dynamique par prefixe).
+ *  "0.0.0.0" et vide -> null (adresse non configuree, pas une adresse). */
+function ipNetOfAddr(s) {
+  if (!truthy(s) || s === "0.0.0.0" || s === "::") return null;
+  if (String(s).indexOf("/") >= 0) return parseIpInterfaceNetwork(s);
+  const ip = parseIpAddress(s);
+  if (!ip) return null;
+  return { version: ip.version, addr: ip.addr, prefix: ip.bits, bits: ip.bits };
+}
+
+/** Noeud d'un porteur d'adresse d'interconnexion, avec sa note standard.
+ *  Tous partagent le kind l3outPath (meme style de carte) ; le clsLabel
+ *  (L3Out Interface, Floating SVI, SVI Member, Node Address) les distingue. */
+function intercoNode(fab, g, mo) {
+  const a = mo.a;
+  if (mo.c === "l3extRsPathL3OutAtt") {
+    const tgt = parsePathTdn(a.tDn);
+    const dn = g.add(fab.node(mo, "l3outPath",
+      `${S(getd(a, "ifInstT", "?"))} ${S(getd(a, "addr", ""))} sur ${pathTargetLabel(tgt)}`));
+    g.nodes.get(dn).target = tgt;
+    return dn;
+  }
+  if (mo.c === "l3extVirtualLIfP")
+    return g.add(fab.node(mo, "l3outPath",
+      `floating SVI ${S(getd(a, "addr", ""))}${truthy(a.encap) ? " encap " + S(a.encap) : ""}`));
+  if (mo.c === "l3extRsDynPathAtt")
+    return g.add(fab.node(mo, "l3outPath", `adresse flottante ${S(getd(a, "floatingAddr", ""))}`));
+  if (mo.c === "l3extMember")
+    return g.add(fab.node(mo, "l3outPath", `cote ${S(getd(a, "side", "?"))} ${S(getd(a, "addr", ""))}`));
+  if (mo.c === "l3extIp")
+    return g.add(fab.node(mo, "l3outPath", `adresse par noeud ${S(getd(a, "addr", ""))}`));
+  return g.add(fab.node(mo, "l3outPath"));
+}
+
+/** Contexte d'un ancrage d'interconnexion : (lifp ->) lnodep -> L3Out ->
+ *  protocoles + VRF + ext-EPGs (noeuds seuls : leurs contrats et prefixes ont
+ *  leur propre famille — les derouler ici recreerait le bruit qu'on fuit).
+ *  startMo : le l3extLIfP ou l3extLNodeP au-dessus de l'ancrage. */
+function linkIntercoContext(fab, g, anchorDn, startMo) {
+  let lifp = null, lnodep = null;
+  if (startMo && startMo.c === "l3extLIfP") {
+    lifp = startMo;
+    lnodep = fab.byDn.get(rnParent(lifp.dn));
+  } else if (startMo && startMo.c === "l3extLNodeP") {
+    lnodep = startMo;
+  }
+  let prev = anchorDn;
+  if (lifp) {
+    const lifpDn = g.add(fab.node(lifp, "l3outIfProfile"));
+    g.link(lifpDn, prev, "contient", "interface");
+    prev = lifpDn;
+  }
+  if (!lnodep || lnodep.c !== "l3extLNodeP") return;
+  const lnodepDn = g.add(fab.node(lnodep, "l3outNodeProfile"));
+  g.link(lnodepDn, prev, "contient", lifp ? "logical interface profile" : "sous le node profile");
+  const outMo = fab.byDn.get(rnParent(lnodep.dn));
+  if (!outMo || outMo.c !== "l3extOut") return;
+  const oDn = g.add(fab.node(outMo, "l3out"));
+  g.link(oDn, lnodepDn, "contient", "logical node profile");
+  const protos = [];
+  for (const [cls, name] of [["ospfExtP", "OSPF"], ["bgpExtP", "BGP"], ["eigrpExtP", "EIGRP"]]) {
+    for (const pr of fab.cls(cls)) {
+      if (rnParent(pr.dn) === outMo.dn) {
+        protos.push(name);
+        g.link(oDn, g.add(fab.node(pr, "routingProto", name)), "active", name);
+      }
+    }
+  }
+  const anchor = g.nodes.get(anchorDn);
+  if (anchor && protos.length) anchor.protocols = [...new Set(protos)].sort(cmpStr);
+  for (const rse of fab.cls("l3extRsEctx")) {
+    if (rnParent(rse.dn) !== outMo.dn) continue;
+    const vrf = fab.inTenant(outMo.dn, "fvCtx", rse.a.tnFvCtxName);
+    if (vrf) g.link(oDn, g.add(fab.node(vrf, "vrf")), "vers-vrf", "L3Out dans le VRF");
+  }
+  for (const inst of fab.cls("l3extInstP")) {
+    if (rnParent(inst.dn) !== outMo.dn) continue;
+    g.link(oDn, g.add(fab.node(inst, "extEpg")), "contient", "external EPG");
+  }
+}
+
+/** Cree le noeud d'un porteur d'adresse, remonte ses porteurs intermediaires
+ *  (l3extIp sous member sous SVI, dynPath sous vlifp...), puis deroule le
+ *  hardware du path et le contexte lifp/lnodep. Retourne le dn du noeud. */
+function intercoAnchor(fab, g, mo) {
+  const dn = intercoNode(fab, g, mo);
+  let cur = mo, curDn = dn;
+  for (;;) {
+    const par = fab.byDn.get(rnParent(cur.dn));
+    if (!par) return dn;
+    if (par.c === "l3extMember" || par.c === "l3extRsPathL3OutAtt" || par.c === "l3extVirtualLIfP") {
+      const pDn = intercoNode(fab, g, par);
+      g.link(pDn, curDn, "contient", "porte l'adresse");
+      cur = par; curDn = pDn;
+      continue;
+    }
+    // sommet de la pile des porteurs : la quincaillerie, puis le contexte.
+    // (pas de hardware pour un floating SVI : il n'a pas de port fixe,
+    // c'est precisement sa raison d'etre)
+    if (cur.c === "l3extRsPathL3OutAtt") {
+      const tgt = g.nodes.get(curDn).target;
+      if (tgt) linkPathToHardware(fab, tgt, g, curDn);
+    }
+    linkIntercoContext(fab, g, curDn, par);
+    return dn;
+  }
+}
+
+/** La famille de hits « interconnexion » : toutes les classes qui portent une
+ *  adresse reelle d'equipement. Le router-id ne matche que si la recherche est
+ *  une adresse precise — ce n'est pas un subnet route, et il ne doit pas
+ *  polluer les recherches larges. */
+function findSubnetInterco(fab, qnet, g, hits) {
+  const seen = new Set();
+  const SCAN = [
+    ["l3extRsPathL3OutAtt", (a) => a.addr, "interconnexion"],
+    ["l3extVirtualLIfP", (a) => a.addr, "interconnexion"],
+    ["l3extRsDynPathAtt", (a) => a.floatingAddr, "interconnexion"],
+    ["l3extMember", (a) => a.addr, "interconnexion"],
+    ["l3extIp", (a) => a.addr, "interconnexion"],
+    ["bgpPeerP", (a) => a.addr, "peer-bgp"],
+  ];
+  for (const [cls, getAddr, role] of SCAN) {
+    for (const mo of fab.cls(cls)) {
+      const net = ipNetOfAddr(getAddr(mo.a));
+      if (!net) continue;
+      const kind = matchKind(qnet, net);
+      if (!kind) continue;
+      let dn;
+      if (cls === "bgpPeerP") {
+        dn = g.add(fab.node(mo, "bgpPeer", `peer BGP ${S(getd(mo.a, "addr", "?"))}`));
+        // trois accrochages mesures (labo + simulateur) : sous le node profile
+        // (peering loopback), sous une interface, sous un floating SVI
+        const par = fab.byDn.get(rnParent(mo.dn));
+        if (par && (par.c === "l3extRsPathL3OutAtt" || par.c === "l3extVirtualLIfP")) {
+          const pDn = intercoNode(fab, g, par);
+          g.link(pDn, dn, "peer", "voisin BGP");
+          linkIntercoContext(fab, g, pDn, fab.byDn.get(rnParent(par.dn)));
+        } else {
+          linkIntercoContext(fab, g, dn, par);
+        }
+      } else {
+        dn = intercoAnchor(fab, g, mo);
+      }
+      if (seen.has(dn)) continue;
+      seen.add(dn);
+      g.nodes.get(dn).matchesQuery = true;
+      hits.push({ dn, role, match: kind });
+    }
+  }
+  if (qnet.prefix === qnet.bits) {
+    for (const rs of fab.cls("l3extRsNodeL3OutAtt")) {
+      const net = ipNetOfAddr(rs.a.rtrId);
+      if (!net || !netEq(qnet, net)) continue;
+      const dn = g.add(fab.node(rs, "l3outPath",
+        `router-id ${S(rs.a.rtrId)} — pas un subnet route`));
+      g.nodes.get(dn).matchesQuery = true;
+      hits.push({ dn, role: "router-id", match: "exact" });
+      linkIntercoContext(fab, g, dn, fab.byDn.get(rnParent(rs.dn)));
+    }
+  }
+}
+
 function resolveVlan(fabrics, vlan) {
   const out = { query: { type: "vlan", value: vlan }, fabrics: [] };
   for (const fab of fabrics) {
@@ -2684,18 +2863,29 @@ function resolveSubnet(fabrics, query, opts) {
       }
     }
 
+    // Les adresses reelles d'equipement : interfaces de L3Out, floating SVI,
+    // membres de vPC, peers BGP, router-id (adresse exacte seulement).
+    findSubnetInterco(fab, qnet, g, hits);
+
     // Les vraies correspondances d'abord, le filet par defaut en queue ;
     // tri STABLE : a nature egale, l'ordre de decouverte est conserve.
     hits.sort((a, b) => (MATCH_RANK[a.match] || 0) - (MATCH_RANK[b.match] || 0));
 
     const nDef = hits.filter((h) => h.match === "default").length;
     const nReal = hits.length - nDef;
+    const INTERCO_ROLES = { "interconnexion": 1, "peer-bgp": 1, "router-id": 1 };
+    const allInterco = nReal > 0 &&
+      hits.every((h) => h.match === "default" || INTERCO_ROLES[h.role]);
     let status, summary;
     if (!hits.length) {
       status = "absent"; summary = "aucune correspondance";
     } else if (!nReal) {
       status = "couvert-par-defaut";
       summary = `couverte par defaut seulement (${nDef} route(s) /0)`;
+    } else if (allInterco) {
+      status = "hit";
+      summary = `interconnexion — ne vit dans aucun BD (${nReal})`
+        + (nDef ? ` + ${nDef} par defaut` : "");
     } else {
       status = "hit";
       summary = `${nReal} correspondance(s)` + (nDef ? ` + ${nDef} par defaut` : "");
@@ -4974,5 +5164,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 17:34 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 17:41 &#183; 437e04</span>
 <!-- FL:END stamp -->
