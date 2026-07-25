@@ -1666,6 +1666,20 @@ function resolveAccessChain(fab, vlan, g, activeIpgs) {
   return roots;
 }
 
+/** Marque un AAEP qui deploie un EPG sans etre rattache a aucun IPG : le VLAN
+ *  ne descend alors sur AUCUN port. Config a moitie faite, frequente en labo
+ *  (Dev_AEP) et possible en prod — si l'ecran ne le dit pas, l'usager croit
+ *  que l'outil a perdu la quincaillerie. */
+function markAaepWithoutIpg(g, aaepDn, orphan) {
+  if (!orphan) return;
+  const node = g.nodes.get(aaepDn);
+  if (!node) return;
+  const msg = TR("! rattache a aucun IPG : ce deploiement ne descend sur aucun port",
+                 "! attached to no IPG: this deployment reaches no port");
+  if (!node.note || node.note.indexOf(msg) < 0)
+    node.note = (node.note ? node.note + " · " : "") + msg;
+}
+
 function resolveAaep(fab, aaep, vlan, g, domDn, activeIpgs) {
   // Aligne sur resolve.py : l'AAEP n'est dessine QUE s'il concerne le VLAN
   // cherche - soit il le deploie (ses IPG sont alors deroules), soit un de
@@ -1690,6 +1704,11 @@ function resolveAaep(fab, aaep, vlan, g, domDn, activeIpgs) {
 
   const aaepDn = g.add(fab.node(aaep, "aaep"));
   g.link(domDn, aaepDn, "utilise-par", TR("domaine attache a l'AAEP", "domain attached to the AAEP"));
+  // Un AAEP qui deploie un EPG sans etre rattache a AUCUN IPG : le VLAN ne
+  // descend sur aucun port. C'est une config a moitie faite, et l'ecran doit
+  // le dire — sinon l'usager croit que l'outil a perdu la quincaillerie
+  // (mesure : le VLAN 400 du labo, Dev_AEP sans interface).
+  markAaepWithoutIpg(g, aaepDn, deploys.length && !rels.length);
 
   for (const f of deploys) {
     const fDn = g.add(fab.node(f, "aaepDeploy",
@@ -1919,14 +1938,17 @@ function resolveEpg(fab, epg, g, note = null, vlan = null) {
       g.link(fDn, epgDn, "vers-epg", TR("vers l'EPG", "to the EPG"));
       // Le deploiement est reel : les IPG de l'AAEP portent cet EPG, leur
       // quincaillerie se deroule (aligne sur la semantique de la vue VLAN).
+      let nIpg = 0;
       for (const rs of fab.revOf(aaep.dn)) {
         if (rs.c !== "infraRsAttEntP") continue;
         const ipg = fab.byDn.get(rnParent(rs.dn));
         if (!ipg) continue;
+        nIpg += 1;
         const ipgDn = g.add(fab.node(ipg, "ipg", lagNote(ipg)));
         g.link(aaepDn, ipgDn, "utilise-par", TR("AAEP utilise par l'IPG", "AAEP used by the IPG"));
         resolveIpgPorts(fab, ipg, g, ipgDn);
       }
+      markAaepWithoutIpg(g, aaepDn, nIpg === 0);
       if (n !== null) encapEntry(n).aaeps.push({ mo: aaep, nodeDn: aaepDn });
     }
 
@@ -5438,5 +5460,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 20:44 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-25 15:33 &#183; 437e04</span>
 <!-- FL:END stamp -->
