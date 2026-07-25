@@ -3860,18 +3860,49 @@ function orbitModel() {
   const sorted = orbit.slice().sort((a, b) => a.score - b.score || a.f.id.localeCompare(b.f.id));
   const groups = new Map();
   sorted.forEach(m => { const k = m.score.toFixed(2); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(m); });
-  const dense = orbit.length > 9;
+  // deux anneaux + capsules compactes des 6 fabriques : au-dela, une seule
+  // couronne ne peut physiquement pas porter des capsules pleine largeur.
+  const dense = orbit.length > 5;
   let ai = 0;
+  const placed = [];
   groups.forEach((g, k) => {
     const base = 180 - ((+k + 1) / 2) * 180;
     const step = Math.min(dense ? 26 : 46, g.length > 1 ? 140 / (g.length - 1) : 46);
     g.forEach((m, j) => {
-      const ang = (base + ((g.length - 1) / 2 - j) * step) * Math.PI / 180;
-      const kk = (dense && ai % 2 === 1) ? .58 : 1;
-      m.pos = { x: CX + RX * kk * Math.cos(ang), y: CY - RY * kk * Math.sin(ang) };
+      placed.push({ m, kk: (dense && ai % 2 === 1) ? .58 : 1, ang: base + ((g.length - 1) / 2 - j) * step });
       ai++;
     });
   });
+  // ── Anti-empilement (mesuré par JFG : plusieurs fabriques au MÊME score
+  // recevaient le même angle et se superposaient dans un coin). Les angles
+  // idéaux restent pilotés par le score ; on écarte ensuite les paires dont
+  // les boîtes se chevauchent réellement, par petites poussées symétriques.
+  // L'ORDRE des scores est conservé, bornes 8°–172° pour rester au-dessus de
+  // la gouttière. Si l'anneau sature, la relaxation s'arrête aux bornes :
+  // dégradé, mais jamais pire qu'avant.
+  const capW = (dense ? 138 : 168) + 12, capH = (dense ? 34 : 50) + 10;
+  const posOf = p => ({
+    x: CX + RX * p.kk * Math.cos(p.ang * Math.PI / 180),
+    y: CY - RY * p.kk * Math.sin(p.ang * Math.PI / 180)
+  });
+  const rings = new Map();
+  placed.forEach(p => { const r = rings.get(p.kk) || []; r.push(p); rings.set(p.kk, r); });
+  rings.forEach(ring => {
+    ring.sort((a, b) => b.ang - a.ang);          // de gauche (180°) à droite (0°)
+    for (let it = 0; it < 80; it++) {
+      let moved = false;
+      for (let i = 1; i < ring.length; i++) {
+        const pa = posOf(ring[i - 1]), pb = posOf(ring[i]);
+        if (Math.abs(pa.x - pb.x) < capW && Math.abs(pa.y - pb.y) < capH) {
+          ring[i - 1].ang = Math.min(172, ring[i - 1].ang + 1.6);
+          ring[i].ang = Math.max(8, ring[i].ang - 1.6);
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+  });
+  placed.forEach(p => { p.m.pos = posOf(p); });
   // gouttiere : on enroule sur plusieurs rangees, sinon au-dela de 4 fabrics
   // sans correspondance les capsules sortaient du cadre par la droite.
   const per = Math.max(1, Math.floor((OW - 120) / 210));
@@ -5407,5 +5438,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 19:41 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-24 20:44 &#183; 437e04</span>
 <!-- FL:END stamp -->
