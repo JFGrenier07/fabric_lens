@@ -3956,7 +3956,53 @@ function arcPath(a, b) {
          ' Q ' + q2.x + ' ' + q2.y + ' ' + b.x + ' ' + b.y;
 }
 
+/* ── Orbitale EN ATTENTE : l'ecran d'ouverture (flux valide par JFG) ───────
+   Aucune requete posee : toutes les fabriques du backup en cercle NEUTRE
+   autour d'une orbite vide — pas d'axes annonce/classification, pas de
+   gouttiere, il n'y a pas encore de question. Cliquer une fabrique montre sa
+   fiche dans le panneau ; la carte, elle, ne s'ouvre qu'avec une requete. */
+function renderOrbitStandby() {
+  ORB = null;
+  const host = $('#l-orbit'); host.innerHTML = '';
+  const svg = el('svg', { viewBox: '0 0 ' + OW + ' ' + OH, preserveAspectRatio: 'xMidYMid meet' });
+  svg.classList.add('orb-in');
+  svg.appendChild(el('ellipse', { class: 'orb-guide', cx: CX, cy: CY, rx: RX, ry: RY }));
+  const core = el('g', { class: 'core' });
+  core.appendChild(el('circle', { class: 'orb-core-bg', cx: CX, cy: CY, r: 62 }));
+  core.appendChild(el('circle', { class: 'orb-core-ring', cx: CX, cy: CY, r: 62 }));
+  core.appendChild(svgText('orb-core-l3', CX, CY - 26, T('en attente', 'waiting')));
+  core.appendChild(svgText('orb-core-v mono', CX, CY + 8, '/'));
+  core.appendChild(svgText('orb-core-m', CX, CY + 28, NFAB + ' fabrics'));
+  svg.appendChild(core);
+  svg.appendChild(svgText('orb-core-src', CX, CY + 86,
+    T('tapez / — un VLAN ou un préfixe', 'type / — a VLAN or a prefix'), { 'text-anchor': 'middle' }));
+  const n = FABRICS.length;
+  const dense = n > 8;
+  const cw = dense ? 138 : 168, ch = dense ? 34 : 50;
+  FABRICS.forEach((fab, i) => {
+    // tour COMPLET de l'ellipse, depart au sommet ; en dense, une capsule sur
+    // deux passe sur l'anneau interieur pour ne jamais s'empiler
+    const ang = (90 - i * 360 / n) * Math.PI / 180;
+    const kk = (dense && i % 2 === 1) ? .62 : 1;
+    const x = CX + RX * kk * Math.cos(ang), y = CY - RY * kk * Math.sin(ang);
+    const g = el('g', {
+      class: 'cap', tabindex: '0', role: 'button', 'data-fab': i,
+      'aria-label': fab.id + ' — ' + T('voir la fiche de cette fabrique', 'view this fabric')
+    });
+    g.appendChild(el('rect', { class: 'capbox', x: x - cw / 2, y: y - ch / 2, width: cw, height: ch, rx: 8 }));
+    g.appendChild(svgText('capid mono', x - cw / 2 + 10, y - ch / 2 + (dense ? 21 : 19), trunc(fab.id, dense ? 15 : 18)));
+    if (!dense) g.appendChild(svgText('capsub', x - cw / 2 + 10, y - ch / 2 + 32,
+      trunc((fab.meta && fab.meta.srcFile) || '', 30)));
+    const open = () => { fabIdx = i; renderPanelStandby(i); renderFabsStandby(); };
+    g.addEventListener('click', open);
+    g.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } });
+    svg.appendChild(g);
+  });
+  host.appendChild(svg);
+}
+
 function renderOrbit(animate) {
+  if (!DATA) { renderOrbitStandby(); return; }
   ORB = orbitModel();
   const host = $('#l-orbit'); host.innerHTML = '';
   const svg = el('svg', { viewBox: '0 0 ' + OW + ' ' + OH, preserveAspectRatio: 'xMidYMid meet' });
@@ -4071,6 +4117,7 @@ function ensureL3Subject() {
   if (!DATA || !DATA.query || DATA.query.type === 'subnet') return false;
   const sk = subnetSubject(DSKEY);
   if (!sk || sk === DSKEY) return false;   // pas de prefixe connu : on garde le repli VLAN
+  QINTENT = DSKEY;                         // on remonte d'une carte VLAN : replonger y ramene
   loadDataset(sk, { view: 'orbite', keepFabric: true });
   return true;
 }
@@ -4078,7 +4125,9 @@ function ensureL3Subject() {
 function setView(v, opts) {
   opts = opts || {};
   clearError();   // le message ne suit pas d'un ecran a l'autre
-  if (!DATA) return;              // rien n'a pu etre resolu : on ne touche a rien
+  // Sans requete (standby), seule l'orbitale a un sens : une carte sans
+  // question posee n'a rien a raconter.
+  if (!DATA && v !== 'orbite') return;
   if (v === 'orbite' && ensureL3Subject()) return;
   view = v;
   $('#l-carte').hidden = v !== 'carte';
@@ -4110,6 +4159,18 @@ function dropIntoCarte(i) {
   if (!DATA) return;              // pas de jeu de donnees : aucune plongee possible
   const cap = ORB && ORB.capEls ? ORB.capEls.get(i) : null;
   const diving = view === 'orbite';
+  // L'usager avait demande un VLAN : la carte ouvre sur CE VLAN dans la
+  // fabrique choisie (l'orbitale, elle, restait sur le prefixe porteur).
+  if (QINTENT && DATA.query && DATA.query.type === 'subnet') {
+    let dv = null;
+    try { dv = ensureDataset(QINTENT); } catch (e) { dv = null; }
+    if (dv) {
+      DSKEY = QINTENT; DATA = dv;
+      $('#qk').textContent = 'VLAN';
+      $('#qv').textContent = String(DATA.query.value);
+      $('#q').value = String(DATA.query.value);
+    }
+  }
   // On PLONGE : le graphe se redessine devant nous (intro), c'est le moment cle.
   switchFabric(i, diving);
   const lc = $('#l-carte'), lo = $('#l-orbit');
@@ -4232,12 +4293,51 @@ function renderTools() {
    dit seulement dans laquelle on se trouve, et par ou l'on sort. La liste des
    fabriques n'existe que dehors, dans l'orbitale. */
 function renderSideMode() {
-  if (!DATA) return;
   const carte = view === 'carte';
   $('#fabs-h').hidden = carte;
   $('#fabs').hidden = carte;
   $('#fabcur').hidden = !carte;
+  if (!DATA) { renderFabsStandby(); return; }   // standby : la liste neutre
   if (carte) renderFabCur(); else renderFabs();
+}
+
+/* La liste des fabriques SANS requete : les noms, le backup, et la fiche au
+   clic. Aucun statut hit/absent — il n'y a pas encore de question posee. */
+function renderFabsStandby() {
+  const box = $('#fabs'); box.innerHTML = '';
+  $('#fab-n').textContent = FABRICS.length;
+  FABRICS.forEach((fab, i) => {
+    const b = document.createElement('button');
+    b.className = 'fab'; b.type = 'button';
+    b.setAttribute('aria-current', i === fabIdx ? 'true' : 'false');
+    b.innerHTML = '<span class="st"></span><span class="id mono">' + esc(fab.id) + '</span>' +
+      '<span class="rl">' + esc(String((fab.mos || []).length)) + ' obj</span>';
+    b.title = fab.id + '\n' + ((fab.meta && fab.meta.srcFile) || '');
+    b.onclick = () => { fabIdx = i; renderPanelStandby(i); renderFabsStandby(); };
+    box.appendChild(b);
+  });
+}
+
+/* La fiche d'une fabrique en attente : ce qu'on sait AVANT toute requete. */
+function renderPanelStandby(i) {
+  const fab = FABRICS[i];
+  $('#p-kick').textContent = 'Fabric';
+  $('#p-name').textContent = fab ? fab.id : 'Fabric Lens';
+  $('#p-cls').textContent = '';
+  $('#p-note').textContent = fab ? '' : T('tapez / pour chercher un VLAN ou un préfixe', 'type / to search a VLAN or a prefix');
+  $('#p-dn').textContent = fab ? ((fab.meta && fab.meta.srcFile) || '—') : '—';
+  $('#p-attrs-h').textContent = 'Backup';
+  $('#p-nbrs-h').textContent = '';
+  $('#p-nbrs').innerHTML = '';
+  $('#p-ident').innerHTML = fab ? kvRows([
+    ['Fabric', fab.id],
+    [T('Objets distillés', 'Distilled objects'), String((fab.mos || []).length)],
+    [T('Backup généré le', 'Backup generated'), (fab.meta && fab.meta.generatedAt) ? String(fab.meta.generatedAt).replace('T', ' ').replace('Z', ' UTC') : '—']
+  ]) : '';
+  $('#p-attrs').innerHTML = fab ? kvRows([
+    [T('Fichier', 'File'), (fab.meta && fab.meta.srcFile) || '—']
+  ]) : '<tr><td class="k">' + T('aucune requête — l’orbitale attend un VLAN ou un préfixe', 'no query — the orbital is waiting for a VLAN or a prefix') + '</td></tr>';
+  renderPrefixBtn(null); renderVlanBtn();
 }
 
 function renderFabCur() {
@@ -4308,10 +4408,10 @@ function renderFabs() {
       (warn ? '<span class="wr" title="' + T('EPG en double déploiement', 'EPG deployed both ways') + '">⚠</span>' : '') +
       '<span class="rl">' + esc(roles) + '</span>';
     b.title = f.id + ' · ' + (f.summary || '') + '\n' + ((f.backup && f.backup.file) || '') +
-      T('\n(double-clic : plonger dans cette fabrique)', '\n(double-click: dive into this fabric)');
-    // liste visible seulement dans l'orbitale (E5b) : un clic vise, un double-clic plonge
-    b.onclick = () => { fabIdx = i; renderAll(false); paintOrbit(); };
-    b.ondblclick = () => dropIntoCarte(i);
+      T('\n(clic : plonger dans cette fabrique)', '\n(click: dive into this fabric)');
+    // liste visible seulement dans l'orbitale : UN CLIC PLONGE dans la carte
+    // de cette fabrique — même geste que les capsules (flux validé par JFG).
+    b.onclick = () => dropIntoCarte(i);
     box.appendChild(b);
   });
 }
@@ -4629,6 +4729,7 @@ function followPrefix() {
   const o = sel && M ? M.byDn.get(sel) : null;
   const p = prefixOf(o);
   if (!p || !p.ds) return;
+  QINTENT = null;   // l'usager pivote VERS un prefixe : l'intention VLAN est close
   loadDataset(p.ds.key, { view: 'orbite', keepFabric: true });
 }
 
@@ -4649,7 +4750,9 @@ function renderVlanBtn() {
 }
 function followVlan() {
   const vk = vlanKeyHere();
-  if (vk) loadDataset(vk, { view: 'carte', keepFabric: true });
+  if (!vk) return;
+  QINTENT = vk;     // pivot explicite vers ce VLAN : replonger y ramenera
+  loadDataset(vk, { view: 'carte', keepFabric: true });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4729,9 +4832,11 @@ function loadDataset(key, opts) {
   const same = (DATA.fabrics || []).findIndex(f => f.id === prevFabId);
   fabIdx = opts.keepFabric && same >= 0 ? same : 0;
   sel = null; hist = []; ORB = null;
-  $('#q').value = '';
+  // Le champ garde la requête sous sa forme canonique : l'usager voit ce qui
+  // est affiché à l'écran, il ne « perd » plus sa recherche.
+  $('#q').value = String(valueOf(key));
   renderAll(opts.intro === true);
-  setView(opts.view || view, { animate: true });
+  setView(opts.view || view || 'orbite', { animate: true });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4895,10 +5000,17 @@ function parseQuery(text) {
 
 /* Execute la requete. Quatre issues, toutes dites a l'ecran : forme fautive,
    resolveur en echec, resolu mais absent partout, resolu et affiche. */
+/* L'INTENTION de la derniere recherche : quand l'usager a cherche un VLAN,
+   l'orbitale bascule sur le prefixe porteur (regle : l'orbitale est toujours
+   de niveau 3) — mais la plongee, elle, doit ouvrir la carte du VLAN qu'il a
+   demande, pas celle du prefixe. */
+let QINTENT = null;
+
 function runQuery(text) {
   const q = parseQuery(text);
   closeQ();
   if (q.err) { showError(q.err, q.detail, q.sugg); return; }
+  QINTENT = q.type === 'vlan' ? q.key : null;
   let d = null;
   try { d = ensureDataset(q.key); }
   catch (e) {
@@ -4919,7 +5031,10 @@ function runQuery(text) {
   clearError(); qi.blur();
   // chercher un VLAN, c'est demander l'interieur d'une fabrique : on atterrit
   // dans la carte. Chercher un prefixe garde la vue courante (E5a).
-  loadDataset(q.key, { view: q.type === 'vlan' ? 'carte' : view });
+  // Une recherche mène TOUJOURS à l'orbitale : on voit d'abord QUI porte le
+  // VLAN/préfixe, puis on choisit la fabrique à ouvrir. (L'ancien comportement
+  // — vue carte conservée, fabrique 0 imposée — donnait des cartes vides.)
+  loadDataset(q.key, { view: 'orbite' });
 }
 
 const qi = $('#q'), ql = $('#qlist');
@@ -5061,10 +5176,18 @@ async function copyDn() {
   const c = $('#p-copied'); c.hidden = false; setTimeout(() => { c.hidden = true; }, 1300);
 }
 $('#btn-copy').onclick = copyDn;
-$('#btn-replay').onclick = () => { if (!DATA) return; flIntro(); };
+$('#btn-replay').onclick = () => { if (!FABRICS) return; flIntro(); };
 { const b = document.getElementById('btn-reload'); if (b) b.onclick = flChangeFile; }
 document.querySelectorAll('input[name=view]').forEach(r => {
-  r.addEventListener('change', () => { if (r.checked && DATA) { r.value === 'orbite' ? riseToOrbit() : dropIntoCarte(fabIdx); } });
+  r.addEventListener('change', () => {
+    if (!DATA) {
+      // standby : pas de carte possible, la radio revient sur l'orbitale
+      const o = document.querySelector('input[name=view][value=orbite]');
+      if (o) o.checked = true;
+      return;
+    }
+    if (r.checked) { r.value === 'orbite' ? riseToOrbit() : dropIntoCarte(fabIdx); }
+  });
 });
 
 addEventListener('keydown', ev => {
@@ -5165,17 +5288,15 @@ if (FL_EMPTY && !BOOT_ERR) {
     BOOT_ERR ? String(BOOT_ERR.message || BOOT_ERR)
              : T('Le fichier contient ', 'The file contains ') + NFAB + T(' fabrique(s) et aucun VLAN ni préfixe exploitable.', ' fabric(s) and no usable VLAN or prefix.'));
 } else {
-  const start = defaultKey();
-  try {
-    DATA = ensureDataset(start); DSKEY = start;
-    if (!DATA) throw new Error(T('le résolveur n’a rien renvoyé pour « ', 'the resolver returned nothing for \u201c') + String(start) + T(' »', '\u201d'));
-    renderAll(true);
-    setView('carte', { animate: false });
-  } catch (e) {
-    DATA = null; DSKEY = null;   // etat coherent : les raccourcis se taisent
-    showError(T('Le résolveur a échoué au démarrage', 'The resolver failed at startup'), String((e && e.message) || e) +
-      T(' — tapez « / » pour chercher un autre VLAN ou un autre préfixe.', ' — type “/” to search another VLAN or prefix.'));
-  }
+  // Plus AUCUNE requete choisie par l'app (flux valide par JFG) : l'ancien
+  // demarrage resolvait un VLAN « representatif » et ouvrait sa CARTE — des
+  // que la premiere fabrique ne le portait pas, l'ecran d'accueil etait une
+  // carte vide. Desormais l'orbitale s'ouvre EN ATTENTE : les fabriques
+  // autour d'une orbite vide, et c'est l'usager qui pose la question.
+  DATA = null; DSKEY = null;
+  $('#qk').textContent = '\u2014'; $('#qv').textContent = '';
+  renderPanelStandby(-1);
+  setView('orbite', { animate: false });
   // Le badge #fl-build est inséré APRÈS ce script dans le DOM : on attend donc
   // qu'il existe pour y inscrire la provenance des données, sinon $('#fl-build')
   // est null et l'information n'a nulle part où s'afficher.
@@ -5460,5 +5581,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-25 15:33 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-27 11:58 &#183; 437e04</span>
 <!-- FL:END stamp -->
