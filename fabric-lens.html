@@ -4113,14 +4113,12 @@ function paintOrbit(hover) {
    courant est un VLAN, on bascule sur le SUBNET que ce VLAN porte : l'orbitale
    est une question de niveau 3. Retourne true si une bascule a eu lieu — dans ce
    cas loadDataset() a deja tout re-rendu et l'appelant doit s'arreter. */
-function ensureL3Subject() {
-  if (!DATA || !DATA.query || DATA.query.type === 'subnet') return false;
-  const sk = subnetSubject(DSKEY);
-  if (!sk || sk === DSKEY) return false;   // pas de prefixe connu : on garde le repli VLAN
-  QINTENT = DSKEY;                         // on remonte d'une carte VLAN : replonger y ramene
-  loadDataset(sk, { view: 'orbite', keepFabric: true });
-  return true;
-}
+/* ensureL3Subject a ete RETIRE (2026-07-27, mesure par JFG) : la bascule
+   automatique VLAN -> « prefixe sujet » volait la recherche de l'usager —
+   chercher vlan 102 affichait un subnet, et le vote de subnetSubject elisait
+   le meme prefixe pour tout. L'orbitale montre CE QUE l'usager a demande :
+   un VLAN reste un VLAN (mode niveau 2), un subnet reste un subnet. Le
+   passage au niveau 3 est un geste EXPLICITE : « Ou vit ce prefixe ? ». */
 
 function setView(v, opts) {
   opts = opts || {};
@@ -4128,7 +4126,6 @@ function setView(v, opts) {
   // Sans requete (standby), seule l'orbitale a un sens : une carte sans
   // question posee n'a rien a raconter.
   if (!DATA && v !== 'orbite') return;
-  if (v === 'orbite' && ensureL3Subject()) return;
   view = v;
   $('#l-carte').hidden = v !== 'carte';
   $('#l-orbit').hidden = v !== 'orbite';
@@ -4159,18 +4156,6 @@ function dropIntoCarte(i) {
   if (!DATA) return;              // pas de jeu de donnees : aucune plongee possible
   const cap = ORB && ORB.capEls ? ORB.capEls.get(i) : null;
   const diving = view === 'orbite';
-  // L'usager avait demande un VLAN : la carte ouvre sur CE VLAN dans la
-  // fabrique choisie (l'orbitale, elle, restait sur le prefixe porteur).
-  if (QINTENT && DATA.query && DATA.query.type === 'subnet') {
-    let dv = null;
-    try { dv = ensureDataset(QINTENT); } catch (e) { dv = null; }
-    if (dv) {
-      DSKEY = QINTENT; DATA = dv;
-      $('#qk').textContent = 'VLAN';
-      $('#qv').textContent = String(DATA.query.value);
-      $('#q').value = String(DATA.query.value);
-    }
-  }
   // On PLONGE : le graphe se redessine devant nous (intro), c'est le moment cle.
   switchFabric(i, diving);
   const lc = $('#l-carte'), lo = $('#l-orbit');
@@ -4238,7 +4223,6 @@ function dropIntoCarte(i) {
 /* Retour a l'orbite : le mouvement inverse, la carte se resorbe vers la capsule. */
 function riseToOrbit() {
   if (!DATA) return;
-  if (ensureL3Subject()) return;   // E5(a) : on remonte toujours sur un prefixe
   renderOrbit(false);
   const lo = $('#l-orbit'), lc = $('#l-carte');
   // symetrique de dropIntoCarte : on tue l'explosion sortante encore en vol,
@@ -4729,7 +4713,6 @@ function followPrefix() {
   const o = sel && M ? M.byDn.get(sel) : null;
   const p = prefixOf(o);
   if (!p || !p.ds) return;
-  QINTENT = null;   // l'usager pivote VERS un prefixe : l'intention VLAN est close
   loadDataset(p.ds.key, { view: 'orbite', keepFabric: true });
 }
 
@@ -4751,7 +4734,6 @@ function renderVlanBtn() {
 function followVlan() {
   const vk = vlanKeyHere();
   if (!vk) return;
-  QINTENT = vk;     // pivot explicite vers ce VLAN : replonger y ramenera
   loadDataset(vk, { view: 'carte', keepFabric: true });
 }
 
@@ -5000,17 +4982,11 @@ function parseQuery(text) {
 
 /* Execute la requete. Quatre issues, toutes dites a l'ecran : forme fautive,
    resolveur en echec, resolu mais absent partout, resolu et affiche. */
-/* L'INTENTION de la derniere recherche : quand l'usager a cherche un VLAN,
-   l'orbitale bascule sur le prefixe porteur (regle : l'orbitale est toujours
-   de niveau 3) — mais la plongee, elle, doit ouvrir la carte du VLAN qu'il a
-   demande, pas celle du prefixe. */
-let QINTENT = null;
 
 function runQuery(text) {
   const q = parseQuery(text);
   closeQ();
   if (q.err) { showError(q.err, q.detail, q.sugg); return; }
-  QINTENT = q.type === 'vlan' ? q.key : null;
   let d = null;
   try { d = ensureDataset(q.key); }
   catch (e) {
@@ -5045,6 +5021,12 @@ function openQ(txt) {
   const q = t ? parseQuery(txt) : null;
   let list = CATALOG.filter(c => !t || c.value.toLowerCase().indexOf(t) >= 0 ||
     c.kindLabel.toLowerCase().indexOf(t) >= 0 || (c.net || '').indexOf(t) >= 0);
+  // « vlan ... » est explicite : ne suggérer QUE des VLANs (mesuré par JFG :
+  // des subnets dans la liste brouillaient une recherche pourtant sans ambiguïté)
+  if (/^vlan[\s-]*\d*$/.test(t)) {
+    const num = (t.match(/\d+/) || [''])[0];
+    list = CATALOG.filter(c => c.type === 'vlan' && (!num || String(c.value).indexOf(num) >= 0));
+  }
   // ce qui est tape passe TOUJOURS en tete, meme si l'index ne le connait pas :
   // la recherche n'est plus limitee au catalogue.
   if (q && !q.err) {
@@ -5581,5 +5563,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-27 11:58 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-27 14:25 &#183; 437e04</span>
 <!-- FL:END stamp -->
