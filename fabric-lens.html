@@ -451,6 +451,54 @@ body { overflow: hidden; }
 .row[data-dead="1"]:hover { background: transparent; }
 .side-foot { padding: var(--space-2) var(--space-4) var(--space-3); font-size: 9.5px; color: var(--color-neutral-600); }
 
+/* Routes « par defaut » declarees : l'interrupteur et sa liste vivent sous la
+   liste des fabriques — c'est la que se lit le compte qu'ils modifient. */
+.defrt { padding: 0 var(--space-2) var(--space-2); flex: none; }
+.defrt[hidden] { display: none; }
+.defrt-in {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.defrt-top {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  border: 0; padding: 0; background: transparent; font: inherit;
+  color: var(--color-neutral-300); text-align: left; cursor: pointer;
+}
+.defrt-top:hover { color: var(--color-text); }
+.defrt-top .lbl { flex: 1; font-size: 10.5px; }
+.defrt-sw {
+  position: relative; width: 26px; height: 14px; flex: none;
+  border-radius: 999px; background: var(--color-neutral-700); transition: background .18s;
+}
+.defrt-sw::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--color-neutral-400); transition: left .18s, background .18s;
+}
+.defrt-top[aria-checked="true"] .defrt-sw { background: color-mix(in srgb, var(--color-accent) 55%, transparent); }
+.defrt-top[aria-checked="true"] .defrt-sw::after { left: 14px; background: var(--color-accent-100); }
+.defrt-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+/* interrupteur au repos : la liste reste editable mais se DIT inactive */
+.defrt[data-on="0"] .defrt-chips { opacity: .45; }
+.defrt-chip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px;
+  padding: 1px 6px; border: 1px solid var(--color-divider); border-radius: 999px;
+  color: var(--color-neutral-300);
+}
+.defrt-chip.fix { color: var(--color-neutral-600); border-style: dashed; }
+.defrt-chip .x {
+  border: 0; padding: 0 1px; background: transparent; font: inherit;
+  color: var(--color-neutral-500); cursor: pointer;
+}
+.defrt-chip .x:hover { color: var(--fl-warn); }
+.defrt-add { display: flex; gap: 4px; }
+.defrt-add .input { flex: 1; min-width: 0; font-size: 10px; padding: 2px 6px; }
+.defrt-add .btn { flex: none; font-size: 10px; padding: 2px 8px; }
+.defrt-err { font-size: 9.5px; color: var(--fl-warn); }
+.defrt-err:empty { display: none; }
+.defrt-note { font-size: 9px; color: var(--color-neutral-600); line-height: 1.35; }
+
 /* E5(b) — dans la CARTE il n'y a pas de selecteur de fabric : la carte est
    l'interieur d'UNE fabrique. On affiche seulement OU l'on est, et la sortie. */
 .fabcur { padding: 0 var(--space-2) var(--space-2); flex: none; }
@@ -882,6 +930,7 @@ button.chip:hover { border-color: var(--color-accent); color: var(--color-accent
     <div class="sec-h" id="fabs-h"><span>Fabrics</span><span class="n" id="fab-n"></span></div>
     <div class="fabs" id="fabs"></div>
     <div class="fabcur" id="fabcur" hidden></div>
+    <div class="defrt" id="defrt" hidden></div>
     <div class="sec-h"><span id="tree-title">Chemin complet</span><span class="n" id="tree-n"></span></div>
     <div class="tree" id="tree"></div>
     <div class="side-foot" id="side-foot"></div>
@@ -2663,13 +2712,13 @@ function nodeIdOf(tDn) {
 /** Routes statiques d'un L3Out (ipRouteP sous le node du node profile) et
  *  leurs next-hops. Une route par defaut statique suit la meme regle que les
  *  /0 d'ext-EPG : dite en une ligne, jamais deroulee d'office. */
-function findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults) {
+function findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults, isDefaultNet) {
   for (const rt of fab.cls("ipRouteP")) {
     const net = parseIpNetwork(rt.a.ip, false);
     if (!net) continue;
     let kind = matchKind(qnet, net);
     if (!kind) continue;
-    if (kind === "aggregate" && net.prefix === 0) kind = "default";
+    if (kind === "aggregate" && isDefaultNet(net)) kind = "default";
     const nodeAtt = fab.byDn.get(rnParent(rt.dn));
     if (kind === "default" && !expandDefaults) {
       const dn = g.add(fab.node(rt, "l3outPath",
@@ -2722,13 +2771,13 @@ function findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults) {
 /** Subnets de management externe (OOB) : qui a le droit d'atteindre le
  *  management des switches. C'est une CLASSIFICATION (comme import-security),
  *  pas une adresse — un graphe parallele au reseau de production. */
-function findSubnetMgmt(fab, qnet, g, hits, expandDefaults) {
+function findSubnetMgmt(fab, qnet, g, hits, expandDefaults, isDefaultNet) {
   for (const ms of fab.cls("mgmtSubnet")) {
     const net = parseIpNetwork(ms.a.ip, false);
     if (!net) continue;
     let kind = matchKind(qnet, net);
     if (!kind) continue;
-    if (kind === "aggregate" && net.prefix === 0) kind = "default";
+    if (kind === "aggregate" && isDefaultNet(net)) kind = "default";
     const inst = fab.byDn.get(rnParent(ms.dn));
     const instName = inst ? S(getd(inst.a, "name", "?")) : "?";
     if (kind === "default" && !expandDefaults) {
@@ -2888,9 +2937,26 @@ const MATCH_RANK = { "exact": 0, "plus-specifique": 1, "aggregate": 2, "default"
  *  Mesure sur le terrain : chercher une interco /30 ramenait 19 hits TOUS par
  *  le /0, l'information reelle noyee. Le /0 n'est pas une correspondance au
  *  prefixe demande, c'est une couverture par defaut : on la DIT, on ne la
- *  deploie qu'a la demande (l'UI rappelle le resolveur avec expandDefaults). */
+ *  deploie qu'a la demande (l'UI rappelle le resolveur avec expandDefaults).
+ *
+ *  opts.defaultNets : les routes-filet DECLAREES par l'usager. Dans ACI le
+ *  catch-all n'est pas toujours 0.0.0.0/0 — un site route son trafic sortant
+ *  par 11.0.0.0/8 ou un autre supernet. Couvrir PAR l'un de ces prefixes vaut
+ *  couverture par defaut, exactement comme le /0 : dit, replie, jamais compte
+ *  comme une correspondance au prefixe demande. Sans l'option, rien ne change
+ *  (les fixtures de regression verrouillent ce chemin). */
 function resolveSubnet(fabrics, query, opts) {
   const expandDefaults = !!(opts && opts.expandDefaults);
+  const userDefaults = [];
+  for (const s of (opts && opts.defaultNets) || []) {
+    const n = parseIpNetwork(String(s), false);
+    if (n) userDefaults.push(n);
+  }
+  // Une route de la liste n'est un defaut que quand elle couvre PAR agregat :
+  // chercher 11.0.0.0/8 lui-meme reste un match exact, deroule normalement —
+  // meme regle que le /0.
+  const isDefaultNet = (net) =>
+    net.prefix === 0 || userDefaults.some((d) => netEq(d, net));
   let qnet = parseIpNetwork(query, false);
   if (!qnet) {
     // Repli identique au Python : on isole la partie adresse et on force /32.
@@ -2916,7 +2982,7 @@ function resolveSubnet(fabrics, query, opts) {
       if (!kind) continue;
       // Le catch-all n'est un "default" que s'il couvre PAR agregat : chercher
       // 0.0.0.0/0 lui-meme reste un match exact, deroule normalement.
-      if (kind === "aggregate" && net.prefix === 0) kind = "default";
+      if (kind === "aggregate" && isDefaultNet(net)) kind = "default";
       const parentMo = fab.byDn.get(rnParent(sub.dn));
       const bd = parentMo;
       if (kind === "default" && !expandDefaults) {
@@ -2964,7 +3030,7 @@ function resolveSubnet(fabrics, query, opts) {
       if (!net) continue;
       let kind = matchKind(qnet, net);
       if (!kind) continue;
-      if (kind === "aggregate" && net.prefix === 0) kind = "default";
+      if (kind === "aggregate" && isDefaultNet(net)) kind = "default";
       const scopes = String(sub.a.scope || "").split(",").filter((s) => s !== "");
       const roles = scopes.map(scopeRole);
       const inst = fab.byDn.get(rnParent(sub.dn));
@@ -3065,8 +3131,8 @@ function resolveSubnet(fabrics, query, opts) {
     // membres de vPC, peers BGP, router-id (adresse exacte seulement) —
     // puis les routes statiques et le management externe (OOB).
     findSubnetInterco(fab, qnet, g, hits);
-    findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults);
-    findSubnetMgmt(fab, qnet, g, hits, expandDefaults);
+    findSubnetStaticRoutes(fab, qnet, g, hits, expandDefaults, isDefaultNet);
+    findSubnetMgmt(fab, qnet, g, hits, expandDefaults, isDefaultNet);
 
     // Les vraies correspondances d'abord, le filet par defaut en queue ;
     // tri STABLE : a nature egale, l'ordre de decouverte est conserve.
@@ -3084,7 +3150,12 @@ function resolveSubnet(fabrics, query, opts) {
       status = "absent"; summary = TR("aucune correspondance", "no match");
     } else if (!nReal) {
       status = "couvert-par-defaut";
-      summary = TR(`couverte par defaut seulement (${nDef} route(s) /0)`, `covered by default only (${nDef} /0 route(s))`);
+      // « /0 » reste le mot juste tant qu'aucune route-filet n'est declaree
+      // (libelle historique, verrouille par les fixtures) ; avec des defauts
+      // declares le hit peut venir d'un /8 — dire « /0 » serait faux.
+      summary = userDefaults.length
+        ? TR(`couverte par defaut seulement (${nDef} route(s) par defaut)`, `covered by default only (${nDef} default route(s))`)
+        : TR(`couverte par defaut seulement (${nDef} route(s) /0)`, `covered by default only (${nDef} /0 route(s))`);
     } else if (allInterco) {
       status = "hit";
       summary = TR(`interconnexion — ne vit dans aucun BD (${nReal})`, `interconnection — lives in no BD (${nReal})`)
@@ -3281,16 +3352,42 @@ const subnetKey = s => 'subnet-' + s;
    DEFEXP : les cles dont les routes par defaut (/0) ont ete deroulees A LA
    DEMANDE — jamais d'office. Une nouvelle recherche repart toujours repliee. */
 const DEFEXP = new Set();
+
+/* ── Routes « par defaut » DECLAREES (routes-filet) ───────────────────────
+   Dans ACI le catch-all n'est pas toujours 0.0.0.0/0 : certains sites routent
+   par 11.0.0.0/8 ou un autre supernet. Le /0 (v4 et v6) est TOUJOURS traite
+   en couverture par defaut par le resolveur ; cette liste y AJOUTE les
+   pseudo-defauts du terrain. Interrupteur actif -> une fabrique qui ne repond
+   que par ces routes est classee « par defaut » : gouttiere, hors compte.
+   Liste et interrupteur sont memorises, comme la langue. */
+let DEFRT_ON = false, DEFRT_LIST = [];
+try {
+  DEFRT_ON = localStorage.getItem('fl-defrt-on') === '1';
+  const l = JSON.parse(localStorage.getItem('fl-defrt-list') || '[]');
+  // Entrees canonicalisees a l'ajout ; on revalide quand meme au chargement,
+  // un localStorage se corrompt plus souvent qu'on ne l'ecrit.
+  if (Array.isArray(l) && RES)
+    DEFRT_LIST = l.filter(s => typeof s === 'string' && RES.parseIpNetwork(s, false));
+} catch (e) { DEFRT_LIST = []; }
+const defrtActive = () => (DEFRT_ON && DEFRT_LIST.length) ? DEFRT_LIST : null;
+
 function ensureDataset(key) {
   const exp = DEFEXP.has(key);
-  const ck = exp ? key + '+def' : key;
+  const extra = key.indexOf('subnet-') === 0 ? defrtActive() : null;
+  // Le cache est keye par TOUT ce qui change le resultat : le deroulement des
+  // defauts ET la liste des routes-filet actives au moment de la resolution.
+  const ck = key + (exp ? '+def' : '') + (extra ? '+x[' + extra.join(' ') + ']' : '');
   if (DATASETS[ck]) return DATASETS[ck];
   if (!FABRICS) return null;
   let d = null;
   const mv = /^vlan-(\d+)$/.exec(key);
   if (mv) d = RES.resolveVlan(FABRICS, parseInt(mv[1], 10));
-  else if (key.indexOf('subnet-') === 0)
-    d = RES.resolveSubnet(FABRICS, key.slice(7), exp ? { expandDefaults: true } : undefined);
+  else if (key.indexOf('subnet-') === 0) {
+    const o = {};
+    if (exp) o.expandDefaults = true;
+    if (extra) o.defaultNets = extra;
+    d = RES.resolveSubnet(FABRICS, key.slice(7), (exp || extra) ? o : undefined);
+  }
   if (d) DATASETS[ck] = d;
   return d;
 }
@@ -4281,8 +4378,112 @@ function renderSideMode() {
   $('#fabs-h').hidden = carte;
   $('#fabs').hidden = carte;
   $('#fabcur').hidden = !carte;
+  renderDefrt();
   if (!DATA) { renderFabsStandby(); return; }   // standby : la liste neutre
   if (carte) renderFabCur(); else renderFabs();
+}
+
+/* ── Routes « par defaut » declarees : le panneau ────────────────────────
+   Visible pendant une recherche de PREFIXE — c'est la seule ou il agit. Le
+   /0 (v4 et v6) est montre en puce fixe : toujours traite en defaut, non
+   retirable. Les routes ajoutees ne s'appliquent qu'interrupteur actif ;
+   tout changement redessine l'ecran SUR PLACE, meme geste que le bouton
+   « Dérouler les routes par défaut ». */
+function defrtSave() {
+  try {
+    localStorage.setItem('fl-defrt-on', DEFRT_ON ? '1' : '0');
+    localStorage.setItem('fl-defrt-list', JSON.stringify(DEFRT_LIST));
+  } catch (e) { /* stockage indisponible : la session courante suffit */ }
+}
+function defrtApply() {
+  defrtSave();
+  if (DSKEY && DSKEY.indexOf('subnet-') === 0) {
+    let d = null;
+    try { d = ensureDataset(DSKEY); } catch (e) { d = null; }
+    if (d) { DATA = d; sel = null; renderAll(false); setView(view, { animate: false }); return; }
+  }
+  renderDefrt();
+}
+function renderDefrt() {
+  const box = $('#defrt');
+  if (!box) return;
+  const show = !!(DATA && DATA.query && DATA.query.type === 'subnet');
+  box.hidden = !show;
+  box.innerHTML = '';
+  if (!show) return;
+  box.dataset.on = DEFRT_ON ? 1 : 0;
+  const d = document.createElement('div');
+  d.className = 'defrt-in';
+
+  const top = document.createElement('button');
+  top.className = 'defrt-top'; top.type = 'button';
+  top.setAttribute('role', 'switch');
+  top.setAttribute('aria-checked', DEFRT_ON ? 'true' : 'false');
+  top.innerHTML = '<span class="lbl">' + T('Exclure les routes par défaut', 'Exclude default routes') +
+    '</span><span class="defrt-sw" aria-hidden="true"></span>';
+  top.title = T('Actif : une fabrique qui ne répond que par une route de cette liste est classée « par défaut » — gouttière de l’orbitale, hors compte. 0.0.0.0/0 et ::/0 le sont d’office.',
+    'On: a fabric answering only through a route of this list is filed “by default” — orbital gutter, out of the count. 0.0.0.0/0 and ::/0 always are.');
+  top.onclick = () => { DEFRT_ON = !DEFRT_ON; defrtApply(); };
+  d.appendChild(top);
+
+  const chips = document.createElement('div');
+  chips.className = 'defrt-chips';
+  ['0.0.0.0/0', '::/0'].forEach(k => {
+    const c = document.createElement('span');
+    c.className = 'defrt-chip fix mono'; c.textContent = k;
+    c.title = T('toujours traité en couverture par défaut — non retirable', 'always treated as default coverage — not removable');
+    chips.appendChild(c);
+  });
+  DEFRT_LIST.forEach(k => {
+    const c = document.createElement('span');
+    c.className = 'defrt-chip mono';
+    const x = document.createElement('button');
+    x.className = 'x'; x.type = 'button'; x.textContent = '×';
+    x.title = T('retirer ', 'remove ') + k;
+    x.onclick = () => { DEFRT_LIST = DEFRT_LIST.filter(s => s !== k); defrtApply(); };
+    c.append(k, x);
+    chips.appendChild(c);
+  });
+  d.appendChild(chips);
+
+  const add = document.createElement('div'); add.className = 'defrt-add';
+  const inp = document.createElement('input');
+  inp.className = 'input mono'; inp.type = 'text';
+  inp.placeholder = '11.0.0.0/8'; inp.autocomplete = 'off'; inp.spellcheck = false;
+  inp.setAttribute('aria-label', T('Ajouter une route par défaut', 'Add a default route'));
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-secondary'; btn.type = 'button'; btn.textContent = '+';
+  btn.title = T('Ajouter à la liste des routes par défaut', 'Add to the default-route list');
+  const err = document.createElement('div'); err.className = 'defrt-err';
+  const go = () => {
+    err.textContent = '';
+    const t = String(inp.value || '').trim();
+    if (!t) return;
+    const net = RES.parseIpNetwork(t, false);
+    if (!net) { err.textContent = '« ' + t + T(' » n’est pas un préfixe', ' » is not a prefix'); return; }
+    const k = RES.netToString(net);
+    if (net.prefix === 0) { err.textContent = T('le /0 est déjà toujours traité en défaut', 'the /0 is already always treated as default'); return; }
+    if (DEFRT_LIST.indexOf(k) >= 0) { err.textContent = k + T(' est déjà dans la liste', ' is already on the list'); return; }
+    DEFRT_LIST.push(k); DEFRT_LIST.sort();
+    inp.value = '';
+    defrtApply();
+    // le panneau vient d'etre redessine : rendre le focus au NOUVEAU champ,
+    // pour enchainer plusieurs ajouts sans reprendre la souris
+    const ni = document.querySelector('#defrt .defrt-add .input');
+    if (ni) ni.focus();
+  };
+  btn.onclick = go;
+  inp.onkeydown = ev => { if (ev.key === 'Enter') { go(); ev.preventDefault(); } };
+  add.append(inp, btn);
+  d.appendChild(add);
+  d.appendChild(err);
+
+  const note = document.createElement('div');
+  note.className = 'defrt-note';
+  note.textContent = T('Dans ACI la route-filet n’est pas toujours 0.0.0.0/0 : déclarez ici les supernets (11.0.0.0/8…) qui servent de défaut.',
+    'In ACI the catch-all is not always 0.0.0.0/0: declare here the supernets (11.0.0.0/8…) acting as defaults.');
+  d.appendChild(note);
+  box.appendChild(d);
 }
 
 /* La liste des fabriques SANS requete : les noms, le backup, et la fiche au
@@ -4347,7 +4548,7 @@ function renderFabCur() {
     const eb = document.createElement('button');
     eb.className = 'btn btn-secondary btn-block'; eb.type = 'button';
     eb.textContent = T('Dérouler ', 'Unfold ') + (nDef > 1 ? T('les ', 'the ') + nDef + T(' routes par défaut', ' default routes') : T('la route par défaut', 'the default route'));
-    eb.title = T('Ce préfixe est couvert par 0.0.0.0/0 (ou ::/0). La chaîne du catch-all n’est pas déroulée d’office : elle ne dit rien de spécifique au préfixe cherché.', 'This prefix is covered by 0.0.0.0/0 (or ::/0). The catch-all chain is not unfolded by default: it says nothing specific about the searched prefix.');
+    eb.title = T('Ce préfixe est couvert par une route par défaut (0.0.0.0/0, ::/0 ou une route déclarée « par défaut »). La chaîne du catch-all n’est pas déroulée d’office : elle ne dit rien de spécifique au préfixe cherché.', 'This prefix is covered by a default route (0.0.0.0/0, ::/0 or a declared “default” route). The catch-all chain is not unfolded by default: it says nothing specific about the searched prefix.');
     eb.onclick = flExpandDefaults;
     box.appendChild(eb);
   }
@@ -4966,8 +5167,10 @@ function parseQuery(text) {
       sugg: nearestNet(ip, 5)
     };
   // Une adresse que SEULE la route par defaut couvre n'est pas « trouvee » :
-  // repondre 0.0.0.0/0 sans le dire ferait croire a une correspondance.
-  if (best.net.prefix === 0)
+  // repondre 0.0.0.0/0 sans le dire ferait croire a une correspondance. Meme
+  // regle pour une route-filet declaree ET active : 11.0.0.0/8 en liste des
+  // defauts COUVRE l'adresse, il ne la trouve pas.
+  if (best.net.prefix === 0 || (defrtActive() && DEFRT_LIST.indexOf(best.k) >= 0))
     return {
       err: T('Aucun préfixe spécifique ne contient ', 'No specific prefix contains ') + t,
       detail: T('Seule la route par défaut ', 'Only the default route ') + best.k + T(' couvre cette adresse dans les ', ' covers this address in the ') + NFAB +
@@ -5563,5 +5766,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-27 14:25 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-31 12:57 &#183; 437e04</span>
 <!-- FL:END stamp -->
