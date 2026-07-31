@@ -4407,7 +4407,12 @@ function defrtApply() {
 function renderDefrt() {
   const box = $('#defrt');
   if (!box) return;
-  const show = !!(DATA && DATA.query && DATA.query.type === 'subnet');
+  // Visible des que des fabriques sont chargees : la liste se peuple AVANT
+  // de chercher (mesure par JFG : cache jusqu'a la premiere recherche de
+  // prefixe, le panneau etait introuvable). Masque pendant une recherche
+  // VLAN, la seule ou il n'agit pas.
+  const show = !!(FABRICS && FABRICS.length)
+    && !(DATA && DATA.query && DATA.query.type === 'vlan');
   box.hidden = !show;
   box.innerHTML = '';
   if (!show) return;
@@ -5766,5 +5771,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-31 12:57 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-31 13:37 &#183; 437e04</span>
 <!-- FL:END stamp -->
