@@ -3371,6 +3371,13 @@ try {
 } catch (e) { DEFRT_LIST = []; }
 const defrtActive = () => (DEFRT_ON && DEFRT_LIST.length) ? DEFRT_LIST : null;
 
+/* ── Vue ciblee / vue complete (carte) ────────────────────────────────────
+   Ciblee (defaut) : la carte ne dessine que le sujet cherche et ce qui s'y
+   rattache ; la vue complete garde le graphe entier de preuve. On memorise
+   l'EXCEPTION (vue complete) : sans stockage, le defaut reste la vue ciblee. */
+let SCOPE_ON = true;
+try { SCOPE_ON = localStorage.getItem('fl-carte-complete') !== '1'; } catch (e) { }
+
 function ensureDataset(key) {
   const exp = DEFEXP.has(key);
   const extra = key.indexOf('subnet-') === 0 ? defrtActive() : null;
@@ -3588,11 +3595,100 @@ let ORB = null, orbCur = 0, introTimer = null;
 /* ═══════════════════════════════════════════════════════════════════════════
    4 · Modele d'un fabric (vue carte)
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Les noeuds SUJETS : ceux qui repondent directement a la question posee.
+   C'est le predicat du marquage `target` des capsules, extrait pour que le
+   filtrage de portee et le marquage ne puissent pas diverger. Le garde
+   qn !== null evite le piege IPv6 : netKey ne parle que l'IPv4, et
+   null === null aurait fait sujet de TOUT noeud sans attribut ip. */
+function subjectSet(raw, hitSet) {
+  const qv = DATA && DATA.query ? String(DATA.query.value) : '';
+  const isVlan = !!(DATA && DATA.query && DATA.query.type === 'vlan');
+  const qn = isVlan ? null : netKey(qv);
+  const subj = new Set();
+  for (const dn in raw) {
+    const n = raw[dn], at = n.attrs || {};
+    if (n.matchesQuery === true || hitSet.has(dn) ||
+        (isVlan && (n.kind === 'encapBlk' || at.encap === 'vlan-' + qv)) ||
+        (!isVlan && qn !== null && (netKey(at.ip) === qn || netKey(at.addr) === qn)))
+      subj.add(dn);
+  }
+  return subj;
+}
+
+/* La PORTEE de la carte — deux filtres, cote page seulement : le resolveur et
+   ses fixtures ne bougent pas, l'arbre et le panneau suivent la carte.
+   1. Interrupteur « Exclure les routes par defaut » actif et defauts replies :
+      un hit « couvre par defaut » qui ne tient a aucune chaine reelle (aucune
+      arete) n'est pas dessine. Le panneau lateral garde le compte et le bouton
+      « Derouler », qui reste la porte pour les voir. Un /0 gateway d'un BD
+      touche par un vrai hit garde son arete vers le BD : il reste.
+   2. Vue ciblee (defaut) : parcours depuis les noeuds sujets, sans jamais
+      entrer dans le detail des contrats (subject → filtre → entry — le contrat
+      lui-meme reste, le panneau porte deja le resume des flux), ni dans une
+      gateway voisine du BD qui ne repond pas au prefixe cherche, ni dans
+      l'inventaire « toutes les interfaces » d'un L3Out. */
+const SCOPE_CUT = { subject: 1, filter: 1, entry: 1 };
+function carteScope(fab, hitOf, hitSet) {
+  const all = fab.nodes || {};
+  let raw = all;
+  if (DEFRT_ON && !DEFEXP.has(DSKEY)) {
+    const linked = new Set();
+    for (const e of (fab.edges || [])) {
+      if (e && all[e.from] && all[e.to]) { linked.add(e.from); linked.add(e.to); }
+    }
+    raw = {};
+    for (const dn in all) {
+      const h = hitOf.get(dn);
+      if (h && h.match === 'default' && !linked.has(dn)) continue;
+      raw[dn] = all[dn];
+    }
+  }
+  if (!SCOPE_ON) return raw;
+  const subj = subjectSet(raw, hitSet);
+  if (!subj.size) return raw;              // rien a cibler : ne pas vider l'ecran
+  const isSub = !!(DATA && DATA.query && DATA.query.type === 'subnet');
+  const cut = (dn) => {
+    const n = raw[dn];
+    if (subj.has(dn)) return false;        // un sujet n'est jamais coupe
+    if (SCOPE_CUT[n.kind]) return true;    // detail des contrats
+    if (isSub && n.kind === 'subnet') return true;   // gateway voisine du BD
+    return false;
+  };
+  const adj = new Map();
+  for (const e of (fab.edges || [])) {
+    if (!e || !raw[e.from] || !raw[e.to]) continue;
+    if (!adj.has(e.from)) adj.set(e.from, []);
+    if (!adj.has(e.to)) adj.set(e.to, []);
+    adj.get(e.from).push(e); adj.get(e.to).push(e);
+  }
+  const keep = new Set(subj);
+  const queue = [...subj];
+  while (queue.length) {
+    const dn = queue.shift();
+    for (const e of (adj.get(dn) || [])) {
+      const other = e.from === dn ? e.to : e.from;
+      if (keep.has(other)) continue;
+      // l'inventaire des interfaces d'un L3Out : on n'y DESCEND pas — la
+      // remontee interface → L3Out, elle, reste permise
+      if (isSub && dn === e.from && raw[dn].kind === 'l3out' &&
+          raw[other].kind === 'l3outPath' && !subj.has(other)) continue;
+      if (cut(other)) continue;
+      keep.add(other); queue.push(other);
+    }
+  }
+  if (keep.size === Object.keys(raw).length) return raw;
+  const out = {};
+  for (const dn in raw) if (keep.has(dn)) out[dn] = raw[dn];
+  return out;
+}
+
 function build(fab) {
   const nodes = [], byDn = new Map(), out = new Map(), inc = new Map();
-  const raw = fab.nodes || {};
   const hitSet = new Set((fab.hits || []).map(h => h.dn));
   const hitOf = new Map((fab.hits || []).map(h => [h.dn, h]));
+  const raw = carteScope(fab, hitOf, hitSet);
+  const subj = subjectSet(raw, hitSet);
   const edgesAll = (fab.edges || []).filter(e => e && raw[e.from] && raw[e.to]);  // dn fantome ignore
   for (const e of edgesAll) {
     if (!out.has(e.from)) out.set(e.from, []);
@@ -3606,7 +3702,6 @@ function build(fab) {
   const outCols = new Set(cols.filter(c => c >= OUTSIDE).map(c => colIdx.get(c)));
 
   const slots = new Map(), laneRows = [0, 0];
-  const qv = DATA.query ? String(DATA.query.value) : '';
   for (const dn in raw) {
     const n = raw[dn], r = rankOf(n.kind);
     const lane = r[0], col = colIdx.get(r[1]);
@@ -3625,11 +3720,7 @@ function build(fab) {
     o.cy = laneY[o.lane] + (laneRows[o.lane] - slots.get(o.lane + ':' + o.col)) / 2 * PITCH_Y
          + o.slot * PITCH_Y + PITCH_Y / 2;
     o.y = o.cy - o.h / 2;
-    const at = o.n.attrs || {};
-    o.target = o.n.matchesQuery === true || hitSet.has(o.dn) ||
-      (DATA.query.type === 'vlan' && (o.n.kind === 'encapBlk' || at.encap === 'vlan-' + qv)) ||
-      (DATA.query.type === 'subnet' && (netKey(at.ip) === netKey(String(DATA.query.value)) ||
-        netKey(at.addr) === netKey(String(DATA.query.value))));
+    o.target = subj.has(o.dn);
     o.hit = hitOf.get(o.dn) || null;
     o.warn = !!(o.n.deployment && o.n.deployment.conflict);
   }
@@ -4361,12 +4452,31 @@ function renderTools() {
   if (view === 'carte') {
     mk('t-over', zmode === 'over' ? 'btn-primary' : 'btn-secondary', T('Vue d’ensemble', 'Overview')).onclick = () => { zmode = 'over'; applyZoom(440); };
     mk('t-loupe', zmode === 'loupe' ? 'btn-primary' : 'btn-secondary', T('Loupe', 'Magnifier')).onclick = () => { zmode = 'loupe'; applyZoom(440); };
+    mk('t-cible', SCOPE_ON ? 'btn-primary' : 'btn-secondary', T('Vue ciblée', 'Focused view'),
+       T('Ne dessiner que le sujet cherché et ce qui s’y rattache : EPG, bindings, IPG, leaves, ports, annonce. Le détail des contrats et les gateways voisines attendent en vue complète.',
+         'Draw only the searched subject and what it holds onto: EPGs, bindings, IPGs, leaves, ports, advertisement. Contract detail and neighboring gateways wait in the full view.'))
+      .onclick = () => setCarteScope(true);
+    mk('t-tout', !SCOPE_ON ? 'btn-primary' : 'btn-secondary', T('Vue complète', 'Full view'),
+       T('Tout le graphe résolu, preuves comprises : subjects → filtres → entries des contrats, gateways voisines du BD, toutes les interfaces des L3Out.',
+         'The whole resolved graph, proofs included: contract subjects → filters → entries, neighboring BD gateways, every L3Out interface.'))
+      .onclick = () => setCarteScope(false);
     mk('t-orb', 'btn-primary', T('◂ Remonter à l’orbitale <kbd>O</kbd>', '◂ Back to the orbital <kbd>O</kbd>'),
        'Sortir de la fabrique. C’est le seul moyen d’en changer.').onclick = riseToOrbit;
   } else {
     mk('t-carte', 'btn-primary', T('Plonger dans <span class="mono">', 'Dive into <span class="mono">') + esc(curFab.id || '—') + '</span> ▸ <kbd>O</kbd>',
        T('Entrer à l’intérieur de cette fabrique', 'Enter this fabric')).onclick = () => dropIntoCarte(fabIdx);
   }
+}
+
+/* Bascule ciblee/complete : meme geste que « Derouler les routes par defaut »
+   — le graphe change, l'ecran se redessine sur place, la selection se recale
+   sur son equivalent quand le noeud selectionne sort de la vue. */
+function setCarteScope(on) {
+  if (SCOPE_ON === !!on) return;
+  SCOPE_ON = !!on;
+  try { localStorage.setItem('fl-carte-complete', SCOPE_ON ? '0' : '1'); } catch (e) { }
+  renderAll(false);
+  setView(view, { animate: false });
 }
 
 /* ── E5(b) · la CARTE est MONO-FABRIC ────────────────────────────────────
@@ -5771,5 +5881,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-07-31 13:37 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-08-03 19:14 &#183; 437e04</span>
 <!-- FL:END stamp -->
