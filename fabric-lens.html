@@ -643,6 +643,48 @@ kbd {
   display: block; font-size: 27px; letter-spacing: .04em; color: var(--color-accent-200);
   text-shadow: 0 0 26px color-mix(in srgb, var(--color-accent) 55%, transparent);
 }
+/* ── Fiche de contrat : qui fournit, qui consomme ─────────────────────────
+   Posee sur le centre de la scene, au-dessus de la carte. La carte reste
+   visible derriere, assombrie : la fiche est une parenthese, pas un ecran. */
+.ctrv {
+  position: absolute; inset: 0; z-index: 7; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--color-bg) 58%, transparent);
+  backdrop-filter: blur(3px);
+  animation: ctrvin .22s ease-out;
+}
+.ctrv[hidden] { display: none; }
+@keyframes ctrvin { from { opacity: 0; } to { opacity: 1; } }
+.ctrv .card {
+  width: min(780px, calc(100% - 48px)); max-height: calc(100% - 56px);
+  display: flex; flex-direction: column; gap: var(--space-2);
+  background: var(--color-surface); border: 1px solid var(--color-accent-800);
+  border-radius: var(--radius-md); padding: var(--space-3);
+  box-shadow: 0 18px 60px color-mix(in srgb, #000 45%, transparent),
+              0 0 0 1px color-mix(in srgb, var(--color-accent) 12%, transparent);
+  animation: ctrvcard .26s cubic-bezier(.22,.61,.36,1);
+}
+@keyframes ctrvcard { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+.ctrv .kick { font-size: 9px; letter-spacing: .3em; text-transform: uppercase; color: var(--color-neutral-500); }
+.ctrv .nm { font-size: 19px; color: var(--color-accent-200); overflow-wrap: anywhere; }
+.ctrv .meta { font-size: 10.5px; color: var(--color-neutral-400); }
+.ctrv .meta .mono { color: var(--color-neutral-300); }
+.ctrv .cols {
+  /* minmax(0,…) : un nom long ne doit pas voler la largeur de l'autre colonne */
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3);
+  min-height: 0;
+}
+.ctrv .col { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.ctrv .col h6 {
+  margin: 0; font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--color-neutral-500);
+}
+.ctrv .col h6 .n { color: var(--color-accent-300); }
+.ctrv .list { overflow: auto; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
+.ctrv .nbr[aria-disabled="true"] { cursor: default; opacity: .62; }
+.ctrv .nbr[aria-disabled="true"]:hover { border-color: var(--color-divider); color: var(--color-neutral-300); }
+.ctrv .void { font-size: 10.5px; color: var(--fl-warn, #d9a066); padding: 2px var(--space-2); }
+.ctrv .foot { font-size: 9.5px; color: var(--color-neutral-600); text-align: right; }
+
 @keyframes divering {
   0%   { opacity: .85; transform: scale(.28); }
   100% { opacity: 0;   transform: scale(3.1); }
@@ -941,6 +983,7 @@ button.chip:hover { border-color: var(--color-accent); color: var(--color-accent
       <div class="layer" id="l-carte"></div>
       <div class="layer" id="l-orbit" hidden></div>
       <div class="dive" id="dive" hidden aria-hidden="true"></div>
+      <div class="ctrv" id="ctrv" hidden></div>
       <div class="tools" id="tools"></div>
       <div class="hintbar">
         <span><kbd>↑</kbd><kbd>↓</kbd> parcourir</span>
@@ -3201,7 +3244,7 @@ function loadFabrics(json) {
 }
 
 
-window.FLResolve = { setLang: setLang, KIND_LABEL: KIND_LABEL, SCOPE_ROLE: SCOPE_ROLE, splitRns: splitRns, lastRn: lastRn, rnParent: rnParent, pathLabel: pathLabel, parsePathTdn: parsePathTdn, pathTargetLabel: pathTargetLabel, encapNum: encapNum, parseIpNetwork: parseIpNetwork, parseIpInterfaceNetwork: parseIpInterfaceNetwork, netToString: netToString, matchKind: matchKind, resolveVlan: resolveVlan, resolveSubnet: resolveSubnet, loadFabrics: loadFabrics };
+window.FLResolve = { setLang: setLang, KIND_LABEL: KIND_LABEL, SCOPE_ROLE: SCOPE_ROLE, splitRns: splitRns, lastRn: lastRn, rnParent: rnParent, pathLabel: pathLabel, parsePathTdn: parsePathTdn, pathTargetLabel: pathTargetLabel, encapNum: encapNum, parseIpNetwork: parseIpNetwork, parseIpInterfaceNetwork: parseIpInterfaceNetwork, netToString: netToString, matchKind: matchKind, contractPorts: contractPorts, peerKindOf: peerKindOf, contractPeers: contractPeers, resolveVlan: resolveVlan, resolveSubnet: resolveSubnet, loadFabrics: loadFabrics };
 })();
 </script>
 <!-- FL:END resolve -->
@@ -3873,10 +3916,13 @@ function renderGraph(intro) {
     }
     if (o.warn) g.appendChild(svgText('warn', o.x + 9, o.y - 4, T('⚠ DOUBLE DÉPLOIEMENT', '⚠ DOUBLE DEPLOYMENT')));
     const ti = el('title');
-    ti.textContent = o.n.label + (o._depTxt ? '\nPoint de déploiement · ' + o._depTxt : '') + '\n' + o.dn;
+    ti.textContent = o.n.label + (o._depTxt ? '\nPoint de déploiement · ' + o._depTxt : '') + '\n' + o.dn
+      + (o.n.kind === 'contract' ? T('\ndouble-clic : qui fournit · qui consomme', '\ndouble-click: who provides · who consumes') : '');
     g.appendChild(ti);
     if (o.n.note) g.appendChild(svgText('note mono', o.x + 9, o.y + o.h + 9, trunc(o.n.note, 32)));
     g.addEventListener('click', () => select(o.dn));
+    if (o.n.kind === 'contract')
+      g.addEventListener('dblclick', ev => { ev.preventDefault(); openContractView(o.dn); });
     o._el = g; gN.appendChild(g);
   }
   host.appendChild(svg);
@@ -4411,6 +4457,7 @@ function dropIntoCarte(i) {
 /* Retour a l'orbite : le mouvement inverse, la carte se resorbe vers la capsule. */
 function riseToOrbit() {
   if (!DATA) return;
+  closeContractView();   // la fiche appartient a la carte qu'on quitte
   renderOrbit(false);
   const lo = $('#l-orbit'), lc = $('#l-carte');
   // symetrique de dropIntoCarte : on tue l'explosion sortante encore en vol,
@@ -4477,6 +4524,136 @@ function setCarteScope(on) {
   try { localStorage.setItem('fl-carte-complete', SCOPE_ON ? '0' : '1'); } catch (e) { }
   renderAll(false);
   setView(view, { animate: false });
+}
+
+/* ── Fiche de contrat : « qui fournit, qui consomme » ─────────────────────
+   Double-clic sur un contrat de la carte (ou bouton du panneau). La carte ne
+   dessine que les EPG lies a la question posee ; la fiche, elle, repond a la
+   question du CONTRAT : tous ses fournisseurs et consommateurs dans CETTE
+   fabrique — EPG, ESG, ext-EPG et vzAny compris, meme hors sujet. Lecture
+   seule : rien n'est ajoute au graphe, Échap ou clic a cote referme. Un pair
+   present sur la carte est cliquable et s'y selectionne ; un pair hors carte
+   est montre quand meme (c'est le POINT de la fiche), en attenue. */
+let CTRV = null;
+
+function fabHere() {
+  const fid = ((DATA && DATA.fabrics ? DATA.fabrics[fabIdx] : null) || {}).id;
+  return (FABRICS || []).find(f => f.id === fid) || null;
+}
+function tenantOfDn(dn) {
+  const m = /^uni\/tn-([^/]+)/.exec(String(dn || ''));
+  return m ? m[1] : null;
+}
+/* le contexte lisible d'un pair : l'AP d'un EPG, le L3Out d'un ext-EPG */
+function peerContext(dn) {
+  let m = /\/ap-([^/]+)/.exec(dn);
+  if (m) return 'AP ' + m[1];
+  m = /\/out-([^/]+)/.exec(dn);
+  if (m) return 'L3Out ' + m[1];
+  return null;
+}
+const PEER_KIND_LBL = { epg: 'EPG', esg: 'ESG', extEpg: 'ext-EPG', vzAny: 'vzAny' };
+
+function openContractView(dn) {
+  const fab = fabHere();
+  const ctr = fab ? fab.byDn.get(dn) : null;
+  const box = $('#ctrv');
+  if (!ctr || ctr.c !== 'vzBrCP' || !box) return;
+  const provs = RES.contractPeers(fab, ctr, 'fvRsProv');
+  const cons = RES.contractPeers(fab, ctr, 'fvRsCons');
+  const ports = RES.contractPorts(fab, ctr);
+
+  box.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-label', T('Fiche du contrat ', 'Contract sheet ') + S(ctr.a.name));
+
+  const head = document.createElement('div');
+  head.innerHTML = '<div class="kick">Contract</div>' +
+    '<div class="nm mono">' + esc(S(ctr.a.name)) + '</div>' +
+    '<div class="meta">scope <span class="mono">' + esc(S(getdA(ctr.a, 'scope', 'context'))) + '</span>' +
+    ' · tenant <span class="mono">' + esc(tenantOfDn(ctr.dn) || '?') + '</span>' +
+    (ports.length
+      ? ' · ' + T('ports ', 'ports ') + '<span class="mono">' + esc(ports.slice(0, 8).join(' · ')) + (ports.length > 8 ? ' +' + (ports.length - 8) : '') + '</span>'
+      : ' · ' + T('aucune entry de filtre dans ce backup', 'no filter entry in this backup')) +
+    '</div>';
+  card.appendChild(head);
+
+  const cols = document.createElement('div');
+  cols.className = 'cols';
+  const mkCol = (title, arw, peers, emptyMsg) => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const h = document.createElement('h6');
+    h.innerHTML = esc(title) + ' <span class="n">' + peers.length + '</span>';
+    col.appendChild(h);
+    const list = document.createElement('div');
+    list.className = 'list';
+    if (!peers.length) {
+      const v = document.createElement('div');
+      v.className = 'void';
+      v.textContent = emptyMsg;
+      list.appendChild(v);
+    }
+    const rows = peers.map(mo => {
+      const kind = RES.peerKindOf(mo);
+      let name = S(getdA(mo.a, 'name', '?'));
+      if (kind === 'vzAny') {
+        const vrf = fab.byDn.get(RES.rnParent(mo.dn));
+        name = T('tout le VRF ', 'the whole VRF ') + (vrf ? S(getdA(vrf.a, 'name', '?')) : '?');
+      }
+      return { mo, kind, name };
+    }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const r of rows) {
+      const onMap = !!(M && M.byDn.has(r.mo.dn));
+      const ctx = [tenantOfDn(r.mo.dn), r.kind === 'vzAny' ? 'vzAny' : peerContext(r.mo.dn)]
+        .filter(Boolean).join(' · ');
+      const b = document.createElement('button');
+      b.className = 'nbr'; b.type = 'button';
+      b.innerHTML = '<span class="rel">' + esc(PEER_KIND_LBL[r.kind] || r.kind) + '</span>' +
+        '<span class="arw">' + arw + '</span>' +
+        '<span class="n mono">' + esc(r.name) + '</span>' +
+        (ctx ? '<span class="prt mono">' + esc(ctx) + '</span>' : '');
+      b.title = r.mo.dn + (onMap
+        ? T('\ncliquer : le sélectionner sur la carte', '\nclick: select it on the map')
+        : T('\nhors de la carte courante — sans lien avec la recherche en cours', '\noutside the current map — unrelated to the current search'));
+      if (onMap) b.onclick = () => { closeContractView(); select(r.mo.dn); };
+      else b.setAttribute('aria-disabled', 'true');
+      list.appendChild(b);
+    }
+    col.appendChild(list);
+    return col;
+  };
+  cols.appendChild(mkCol(T('Fournissent', 'Provide'), '→', provs,
+    T('personne ne le fournit', 'nobody provides it')));
+  cols.appendChild(mkCol(T('Consomment', 'Consume'), '←', cons,
+    T('personne ne le consomme', 'nobody consumes it')));
+  card.appendChild(cols);
+
+  const foot = document.createElement('div');
+  foot.className = 'foot';
+  foot.innerHTML = T('<kbd>Échap</kbd> ou clic à côté pour fermer', '<kbd>Esc</kbd> or click outside to close');
+  card.appendChild(foot);
+
+  box.appendChild(card);
+  box.onclick = ev => { if (ev.target === box) closeContractView(); };
+  box.hidden = false;
+  CTRV = dn;
+}
+
+function closeContractView() {
+  const box = $('#ctrv');
+  if (box) { box.hidden = true; box.innerHTML = ''; }
+  CTRV = null;
+}
+
+/* dict.get(k, d) local a la page : S()/getd() vivent dans le resolveur */
+function getdA(a, k, d) {
+  return a[k] === undefined || a[k] === null || a[k] === '' ? d : a[k];
+}
+function S(v) {
+  return v === undefined || v === null ? '?' : String(v);
 }
 
 /* ── E5(b) · la CARTE est MONO-FABRIC ────────────────────────────────────
@@ -4834,6 +5011,18 @@ function renderPanel() {
 
   const box = $('#p-nbrs'); box.innerHTML = '';
 
+  // Un contrat s'ouvre en fiche : TOUS ses pairs, meme hors de la carte —
+  // le meme geste que le double-clic sur le noeud.
+  if (n.kind === 'contract') {
+    const b = document.createElement('button');
+    b.className = 'nbr'; b.type = 'button';
+    b.innerHTML = '<span class="rel">' + T('fiche', 'sheet') + '</span><span class="arw">→</span>' +
+      '<span class="n">' + T('qui fournit · qui consomme (tous les pairs)', 'who provides · who consumes (all peers)') + '</span>';
+    b.title = T('Le double-clic sur le contrat dans la carte ouvre la même fiche', 'Double-clicking the contract on the map opens the same sheet');
+    b.onclick = () => openContractView(o.dn);
+    box.appendChild(b);
+  }
+
   // E1 — point de deploiement, en tete des voisins, cliquable
   const dep = deployInfo(o);
   if (dep) {
@@ -5075,6 +5264,7 @@ function equivalent(prev) {
 function switchFabric(i, intro) {
   const f = (DATA.fabrics || [])[i];
   if (!f) return;
+  closeContractView();   // la fiche parlait de l'ecran d'avant
   const prev = (M && sel) ? (M.byDn.get(sel) || {}).n : null;
   fabIdx = i;
   if (introTimer) { clearTimeout(introTimer); introTimer = null; }
@@ -5495,6 +5685,12 @@ addEventListener('keydown', ev => {
   if (t && t.matches && t.matches('input, textarea')) return;
   if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
   const k = ev.key;
+  // La fiche de contrat est MODALE : Échap la ferme, le reste ne navigue pas
+  // derriere elle (une selection invisible sous la fiche serait un piege).
+  if (CTRV) {
+    if (k === 'Escape') closeContractView();
+    ev.preventDefault(); return;
+  }
   if (k === '/') { qi.focus(); qi.select(); ev.preventDefault(); return; }
   // rien n'a pu etre resolu (donnees illisibles, resolveur en echec au demarrage) :
   // le message est a l'ecran, les raccourcis ne doivent pas lever par-dessus.
@@ -5881,5 +6077,5 @@ function flIntro() {
 </script>
 </html>
 <!-- FL:BLOCK stamp fmt=text -->
-<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-08-03 19:14 &#183; 437e04</span>
+<span id="fl-build" title="Repere de version. La page y ajoute la provenance des donnees chargees.">build 2026-08-03 20:35 &#183; 437e04</span>
 <!-- FL:END stamp -->
